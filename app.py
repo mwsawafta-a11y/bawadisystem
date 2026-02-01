@@ -9,14 +9,25 @@ from login import login
 
 from inventory_page import inventory_page
 from orders_prep_page import orders_prep_page
-from sales_page import sales_page
 from customers_page import customers_page
 from distributors_page import distributors_page
  
 
-st.set_page_config(page_title="نظام المخبز", layout="wide")
+st.set_page_config(
+    page_title="نظام المخبز",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
 
-
+# إخفاء أدوات Streamlit
+hide_streamlit_style = """
+<style>
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;}
+</style>
+"""
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 # =========================================================
 # Helpers (FAST)
 # =========================================================
@@ -533,9 +544,6 @@ elif st.session_state.page == "inventory":
 
 elif st.session_state.page == "orders_prep":
     orders_prep_page(go, user)
-
-elif st.session_state.page == "sales":
-    sales_page(go, user)
 
 elif st.session_state.page == "distributors":
     distributors_page(go, user)
