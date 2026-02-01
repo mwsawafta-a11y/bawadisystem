@@ -12,22 +12,23 @@ from orders_prep_page import orders_prep_page
 from customers_page import customers_page
 from distributors_page import distributors_page
  
-
 st.set_page_config(
     page_title="نظام المخبز",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# إخفاء أدوات Streamlit
-hide_streamlit_style = """
+hide_all_streamlit = """
 <style>
 #MainMenu {visibility: hidden;}
-footer {visibility: hidden;}
 header {visibility: hidden;}
+footer {visibility: hidden;}
+.stDeployButton {display:none;}
+[data-testid="stDecoration"] {display:none;}
 </style>
 """
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+st.markdown(hide_all_streamlit, unsafe_allow_html=True)
+
 # =========================================================
 # Helpers (FAST)
 # =========================================================
