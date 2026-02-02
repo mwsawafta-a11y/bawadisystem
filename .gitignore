@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual env
+.venv/
+venv/
+
+# Streamlit secrets
+.streamlit/
+
+# Firebase keys
+serviceAccountKey.json
+*.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# VS Code
+.vscode/
