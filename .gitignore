@@ -21,3 +21,19 @@ Thumbs.db
 
 # VS Code
 .vscode/
+
+# local helper files
+py
+pillow
+where
+streamlit
+
+# secrets
+secrets.toml
+serviceAccountKey.json
+
+# python cache / env
+__pycache__/
+.venv/
+.vscode/
+.devcontainer/
