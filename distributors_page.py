@@ -1,9 +1,14 @@
 import streamlit as st
 import streamlit.components.v1 as components
+import hashlib
+
 from datetime import datetime, timezone, timedelta
 
 from firebase_config import db
 from firebase_admin import firestore
+
+def hash_password(pw: str) -> str:
+    return hashlib.sha256((pw or "").encode("utf-8")).hexdigest()
 
 
 # ---------------------------
@@ -438,27 +443,66 @@ def distributors_page(go, user):
         st.subheader("👤 إدارة الموزّعين")
 
         with st.expander("➕ إضافة موزّع", expanded=False):
-            with st.form("add_distributor_form"):
-                name = st.text_input("اسم الموزّع *")
-                phone = st.text_input("الهاتف (اختياري)")
-                submit = st.form_submit_button("حفظ")
+                with st.form("add_distributor_form"):
+                    name = st.text_input("اسم الموزّع *")
+                    phone = st.text_input("الهاتف (اختياري)")
 
-            if submit:
-                if not name.strip():
-                    st.error("اسم الموزّع مطلوب")
-                else:
+                    st.markdown("### 🔐 بيانات الدخول للموزّع")
+                    username = st.text_input("اسم المستخدم *")
+                    password = st.text_input("كلمة المرور *", type="password")
+
+                    submit = st.form_submit_button("حفظ")
+
+                if submit:
+                    if not name.strip():
+                        st.error("اسم الموزّع مطلوب")
+                        st.stop()
+
+                    if not username.strip() or not password.strip():
+                        st.error("اسم المستخدم وكلمة المرور مطلوبان")
+                        st.stop()
+
                     dist_id = name.strip().lower().replace(" ", "_")
+
+                    # تحقق من عدم وجود الموزع مسبقاً
+                    existing_dist = db.collection("distributors").document(dist_id).get()
+                    if existing_dist.exists:
+                        st.error("الموزّع موجود مسبقًا")
+                        st.stop()
+
+                    # تحقق من عدم وجود اسم المستخدم
+                    existing_user = db.collection("admin_users").document(username.strip()).get()
+                    if existing_user.exists:
+                        st.error("اسم المستخدم مستخدم مسبقًا")
+                        st.stop()
+
+                    # =========================
+                    # 1️⃣ إنشاء الموزّع
+                    # =========================
                     doc_set("distributors", dist_id, {
                         "name": name.strip(),
                         "phone": phone.strip(),
                         "crates_balance": 0,
-                        "money_balance": 0.0,  # ✅ جديد
+                        "money_balance": 0.0,
                         "active": True,
                         "created_at": now_iso(),
                         "updated_at": now_iso(),
                         "created_by": user.get("username", ""),
                     }, merge=True)
-                    st.success("تمت إضافة الموزّع ✅")
+
+                    # =========================
+                    # 2️⃣ إنشاء حساب دخول داخل admin_users
+                    # =========================
+                    db.collection("admin_users").document(username.strip()).set({
+                        "username": username.strip(),
+                        "password_hash": hash_password(password.strip()),
+                        "role": "distributor",
+                        "distributor_id": dist_id,
+                        "active": True,
+                        "created_at": now_iso(),
+                    })
+
+                    st.success("تمت إضافة الموزّع وإنشاء حساب الدخول ✅")
                     st.rerun()
 
         q = st.text_input("🔎 بحث موزّع", placeholder="اكتب اسم/هاتف...", key="dist_search")

@@ -463,7 +463,14 @@ def customers_page(go, user):
                 name = st.text_input("اسم العميل *")
                 phone = st.text_input("الهاتف (اختياري)")
                 area = st.text_input("المنطقة (اختياري)")
-                opening = st.number_input("دين سابق / رصيد افتتاحي", min_value=0.0, step=1.0, value=0.0)
+                #opening = st.number_input("دين سابق / رصيد افتتاحي", min_value=0.0, step=1.0, value=0.0)
+                opening = st.number_input(
+                "دين سابق / رصيد افتتاحي",
+                min_value=0.0,
+                step=0.001,
+                value=0.0,
+                format="%.3f"
+            )
                 submitted = st.form_submit_button("حفظ")
 
             if submitted:
@@ -647,26 +654,33 @@ def customers_page(go, user):
                     "balance": to_float(c.get("balance", 0)),
                 })
 
+            # ✅ حوّل opening_balance لنص عشان يقبل النقطة/الفاصلة بكل الأجهزة
+            for r in rows:
+                r["opening_balance"] = str(r.get("opening_balance", 0))
+
             edited = st.data_editor(
                 rows,
                 use_container_width=True,
                 hide_index=True,
                 disabled=["id", "balance"],
                 column_config={
-                    "opening_balance": st.column_config.NumberColumn("دين سابق", step=1.0),
+                    "opening_balance": st.column_config.TextColumn("دين سابق (اكتب 17.5 أو 17,5)"),
                 },
                 key="customers_editor"
             )
+            
 
             colA, colB = st.columns(2)
             with colA:
                 if st.button("💾 حفظ التعديلات", use_container_width=True, key="cust_save_btn"):
                     for r in edited:
+                        opening_val = float(to_float(r.get("opening_balance")))
                         doc_set("customers", r["id"], {
                             "name": (r.get("name") or "").strip(),
                             "phone": (r.get("phone") or "").strip(),
                             "area": (r.get("area") or "").strip(),
-                            "opening_balance": float(to_float(r.get("opening_balance"))),
+                            "opening_balance": opening_val,
+                            "balance": opening_val,
                             "updated_at": now_iso(),
                         }, merge=True)
                     st.success("تم حفظ التعديلات ✅")

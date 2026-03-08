@@ -29,6 +29,7 @@ where
 streamlit
 
 # secrets
+.streamlit/secrets.toml
 secrets.toml
 serviceAccountKey.json
 
