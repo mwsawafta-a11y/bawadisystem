@@ -3,7 +3,6 @@ from datetime import datetime, timezone, timedelta
 from io import BytesIO
 
 import pandas as pd
-
 from firebase_config import db
 from login import login
 
@@ -11,20 +10,121 @@ from inventory_page import inventory_page
 from orders_prep_page import orders_prep_page
 from customers_page import customers_page
 from distributors_page import distributors_page
- 
+from orders_archive_page import orders_archive_page
+
 st.set_page_config(
     page_title="نظام المخبز",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
+# =========================================================
+# Global UI/CSS (Hide + Responsive + Fix top spacing)
+# =========================================================
 hide_all_streamlit = """
 <style>
+/* =========================
+   Hide Streamlit chrome
+   ========================= */
 #MainMenu {visibility: hidden;}
 header {visibility: hidden;}
 footer {visibility: hidden;}
 .stDeployButton {display:none;}
 [data-testid="stDecoration"] {display:none;}
+
+/* =========================
+   RTL + base layout
+   ========================= */
+html, body, [data-testid="stAppViewContainer"], .stApp {
+  direction: rtl;
+  text-align: right;
+}
+
+/* ✅ تقليل الفراغ الكبير أعلى الصفحة */
+section.main > div.block-container{
+  max-width: 1200px;
+  padding-top: 0.2rem !important;
+  padding-bottom: 1.6rem !important;
+  padding-left: 1rem !important;
+  padding-right: 1rem !important;
+}
+
+/* تقليل مسافات العناوين والفواصل */
+h1, h2, h3 { margin-top: 0.2rem !important; }
+hr, .stDivider { margin: 0.6rem 0 !important; }
+
+/* تحسين الأزرار (بدون تغيير ألوان الثيم) */
+div[data-testid="column"] button{
+  height: 44px !important;
+  border-radius: 14px !important;
+  font-weight: 800 !important;
+  border: 1px solid rgba(0,0,0,0.08) !important;
+}
+
+/* DataFrame: خليها قابلة للتمرير أفقياً */
+div[data-testid="stDataFrame"]{
+  width: 100%;
+  overflow-x: auto;
+}
+
+/* Expander title */
+details summary { font-weight: 800; }
+
+/* =========================
+   Mobile rules (✅ Metrics 2 columns)
+   ========================= */
+@media (max-width: 768px){
+
+  section.main > div.block-container{
+    padding-top: 0.1rem !important;
+    padding-left: 0.6rem !important;
+    padding-right: 0.6rem !important;
+  }
+
+  /* صفوف الأعمدة تلتف */
+  div[data-testid="stHorizontalBlock"]{
+    flex-wrap: wrap !important;
+    gap: 0.6rem !important;
+  }
+
+  /* ✅ فقط الأعمدة التي تحتوي Metric: خليها 50% (عمودين بكل صف) */
+  div[data-testid="stHorizontalBlock"] > div:has(div[data-testid="stMetric"]){
+    flex: 0 0 calc(50% - 0.6rem) !important;
+    width: calc(50% - 0.6rem) !important;
+    min-width: calc(50% - 0.6rem) !important;
+  }
+
+  /* ✅ صف الأزرار: توسيط حتى ما تنزاح لليسار */
+  div[data-testid="stHorizontalBlock"]:has(div[data-testid="stDownloadButton"]),
+  div[data-testid="stHorizontalBlock"]:has(div[data-testid="stButton"]){
+    justify-content: center !important;
+  }
+
+  /* ✅ أعمدة الأزرار: خليها 50% (زرين جنب بعض) */
+  div[data-testid="stHorizontalBlock"] > div:has(div[data-testid="stDownloadButton"]),
+  div[data-testid="stHorizontalBlock"] > div:has(div[data-testid="stButton"]){
+    flex: 0 0 calc(50% - 0.6rem) !important;
+    width: calc(50% - 0.6rem) !important;
+    min-width: calc(50% - 0.6rem) !important;
+  }
+
+  /* الأزرار بعرض العمود */
+  div[data-testid="stDownloadButton"] button,
+  div[data-testid="stButton"] button{
+    width: 100% !important;
+    height: 46px !important;
+  }
+
+  /* تصغير المتركس شوي */
+  div[data-testid="stMetric"] *{
+    font-size: 0.95rem !important;
+  }
+
+  /* Dataframe خط أصغر */
+  div[data-testid="stDataFrame"] *{
+    font-size: 0.90rem !important;
+  }
+}
 </style>
 """
 st.markdown(hide_all_streamlit, unsafe_allow_html=True)
@@ -82,7 +182,7 @@ def _fetch_alerts_raw(limit_each: int = 200):
         x = d.to_dict() or {}
         name = x.get("name") or d.id
         qty = to_float(x.get("qty_on_hand", 0))
-        min_qty = to_float(x.get("min_qty", 0))  # إذا غير موجود = 0
+        min_qty = to_float(x.get("min_qty", 0))
 
         if qty <= 0:
             out_count += 1
@@ -100,7 +200,6 @@ def _fetch_alerts_raw(limit_each: int = 200):
 
 def get_alerts_cached(ttl_seconds: int = 30, limit_each: int = 200):
     now_ts = datetime.now().timestamp()
-
     cache_ts = st.session_state.get("alerts_ts", 0.0)
     cache_data = st.session_state.get("alerts_cache", None)
 
@@ -117,10 +216,6 @@ def get_alerts_cached(ttl_seconds: int = 30, limit_each: int = 200):
 # Today Sales/Collections Report (cached)
 # =========================================================
 def _get_today_docs(collection_name: str, today: str, limit=700):
-    """
-    خفيف: نسحب limit ثم نفلتر محلياً حسب created_at يبدأ بـ YYYY-MM-DD
-    (لا نستخدم where على created_at حتى لا نحتاج index)
-    """
     docs = db.collection(collection_name).where("active", "==", True).limit(limit).stream()
     out = []
     for d in docs:
@@ -140,11 +235,9 @@ def get_today_report_cached(ttl_seconds=30, limit_sales=900, limit_cols=900):
         return cached
 
     today = _today_str_jordan()
-
     sales = _get_today_docs("sales", today=today, limit=limit_sales)
     cols = _get_today_docs("collections", today=today, limit=limit_cols)
 
-    # ---- ملخص ----
     total_sales = 0.0
     invoices_count = 0
 
@@ -153,12 +246,10 @@ def get_today_report_cached(ttl_seconds=30, limit_sales=900, limit_cols=900):
 
     paid_in_sales = 0.0
     collections_total = 0.0
-
     unpaid_today = 0.0
 
     rows = []
 
-    # sales
     for s in sales:
         if s.get("status") not in ["posted", "done"]:
             continue
@@ -191,7 +282,6 @@ def get_today_report_cached(ttl_seconds=30, limit_sales=900, limit_cols=900):
             "مرجع": f"SALE:{s.get('id','')}",
         })
 
-    # collections
     for c in cols:
         if c.get("status") not in ["posted", "done"]:
             continue
@@ -239,7 +329,6 @@ def get_today_report_cached(ttl_seconds=30, limit_sales=900, limit_cols=900):
 # Printing + Export
 # =========================================================
 def build_today_report_html(rep: dict, company_name="نظام المخبز", paper="a4", cashier_name=""):
-    # ✅ دائمًا A4
     width_css = "850px"
     font_css = "14px"
 
@@ -362,7 +451,6 @@ def export_today_excel(rep: dict) -> bytes:
     }])
 
     bio = BytesIO()
-    # ✅ سيعمل فقط إذا openpyxl موجودة
     with pd.ExcelWriter(bio, engine="openpyxl") as writer:
         summary.to_excel(writer, index=False, sheet_name="Summary")
         df.to_excel(writer, index=False, sheet_name="Today")
@@ -397,9 +485,13 @@ if st.session_state.user is None:
 
 user = st.session_state.user
 
-if user.get("role") != "admin":
+role = user.get("role")
+
+if role not in ["admin", "distributor"]:
     st.error("ليس لديك صلاحية الوصول")
     st.stop()
+
+
 
 
 # =========================================================
@@ -414,12 +506,6 @@ if st.session_state.page == "dashboard":
 
     st.markdown("""
     <style>
-    div[data-testid="column"] button {
-        height: 44px !important;
-        border-radius: 14px !important;
-        border: 1px solid rgba(0,0,0,0.08) !important;
-        font-weight: 800 !important;
-    }
     .bell-red button { background:#ff4b4b!important; color:white!important; border:0!important; }
     .bell-yellow button { background:#f4c542!important; color:#111!important; border:0!important; }
     .bell-gray button { background:#f1f1f1!important; color:#444!important; border:0!important; }
@@ -457,54 +543,53 @@ if st.session_state.page == "dashboard":
     # ---------- Today Report ----------
     rep = get_today_report_cached(ttl_seconds=30, limit_sales=900, limit_cols=900)
 
-    st.subheader(f"📊 ملخص اليوم ({rep['today']})")
+    with st.expander(f"📊 ملخص اليوم ({rep['today']})", expanded=False):
 
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("💰 إجمالي المبيعات", f"{rep['total_sales']:.3f}")
-    m2.metric("💵 المقبوض اليوم", f"{rep['total_received']:.3f}")
-    m3.metric("🧾 ذمم اليوم (متبقي)", f"{rep['unpaid_today']:.3f}")
-    m4.metric("📦 عدد الفواتير", f"{rep['invoices_count']}")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("💰 إجمالي المبيعات", f"{rep['total_sales']:.3f}")
+        m2.metric("💵 المقبوض اليوم", f"{rep['total_received']:.3f}")
+        m3.metric("🧾 ذمم اليوم (متبقي)", f"{rep['unpaid_today']:.3f}")
+        m4.metric("📦 عدد الفواتير", f"{rep['invoices_count']}")
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("🧾 مبيعات نقدي", f"{rep['cash_sales_total']:.3f}")
-    c2.metric("📌 مبيعات ذمم", f"{rep['credit_sales_total']:.3f}")
-    c3.metric("🏦 النقد بالصندوق اليوم", f"{rep['cash_in_box']:.3f}")
-    c4.metric("🧾 سندات القبض اليوم", f"{rep['collections_total']:.3f}")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("🧾 مبيعات نقدي", f"{rep['cash_sales_total']:.3f}")
+        c2.metric("📌 مبيعات ذمم", f"{rep['credit_sales_total']:.3f}")
+        c3.metric("🏦 النقد بالصندوق اليوم", f"{rep['cash_in_box']:.3f}")
+        c4.metric("🧾 سندات القبض اليوم", f"{rep['collections_total']:.3f}")
 
-    # ✅ أدوات: طباعة A4 + تنزيل (بدون خيار ورق)
-    a2, a3 = st.columns([1.6, 2.2])
+        # ✅ أدوات: طباعة A4 + تنزيل (بدون خيار ورق)
+        a2, a3 = st.columns([1.6, 2.2])
 
-    with a2:
-        if st.button("🖨️ طباعة كشف اليوم (A4)", use_container_width=True, key="today_print_btn"):
-            html = build_today_report_html(
-                rep,
-                company_name="نظام المخبز",
-                paper="a4",  # ✅ ثابت دائمًا
-                cashier_name=user.get("username", "")
-            )
-            st.components.v1.html(html, height=900, scrolling=True)
+        with a2:
+            if st.button("🖨️ طباعة كشف اليوم (A4)", use_container_width=True, key="today_print_btn"):
+                html = build_today_report_html(
+                    rep,
+                    company_name="نظام المخبز",
+                    paper="a4",
+                    cashier_name=user.get("username", "")
+                )
+                st.components.v1.html(html, height=900, scrolling=True)
 
-    with a3:
-        # ✅ Excel إذا openpyxl موجودة، وإلا CSV سريع
-        try:
-            xbytes = export_today_excel(rep)
-            st.download_button(
-                "📥 تنزيل Excel (اليوم)",
-                data=xbytes,
-                file_name=f"today_report_{rep['today']}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
-        except Exception:
-            df = pd.DataFrame(rep.get("rows", []) or [])
-            csv_bytes = df.to_csv(index=False).encode("utf-8-sig")
-            st.download_button(
-                "📥 تنزيل CSV (اليوم)",
-                data=csv_bytes,
-                file_name=f"today_report_{rep['today']}.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
+        with a3:
+            try:
+                xbytes = export_today_excel(rep)
+                st.download_button(
+                    "📥 تنزيل Excel (اليوم)",
+                    data=xbytes,
+                    file_name=f"today_report_{rep['today']}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+            except Exception:
+                df = pd.DataFrame(rep.get("rows", []) or [])
+                csv_bytes = df.to_csv(index=False).encode("utf-8-sig")
+                st.download_button(
+                    "📥 تنزيل CSV (اليوم)",
+                    data=csv_bytes,
+                    file_name=f"today_report_{rep['today']}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
 
     with st.expander("📄 تفاصيل اليوم (بيع + قبض)", expanded=False):
         if not rep["rows"]:
@@ -517,17 +602,26 @@ if st.session_state.page == "dashboard":
     # ---------- Navigation Buttons ----------
     left, center, right = st.columns([1.2, 2.2, 1.2])
     with center:
-        if st.button("👥 العملاء", use_container_width=True):
-            go("customers")
+        role = user.get("role")
 
-        if st.button("📦 إدارة المستودع", use_container_width=True):
-            go("inventory")
+        if role == "admin":
+            if st.button("👥 العملاء", use_container_width=True):
+                go("customers")
 
-        if st.button("🧑‍🍳 تحضير الأوردرات", use_container_width=True):
-            go("orders_prep")
+            if st.button("📦 إدارة المستودع", use_container_width=True):
+                go("inventory")
 
-        if st.button("🚚 الموزعين", use_container_width=True):
-            go("distributors")
+        if role in ["admin", "distributor"]:
+            if st.button("🧑‍🍳 تحضير الأوردرات", use_container_width=True):
+                go("orders_prep")
+
+        if user.get("role") == "admin":
+            if st.button("📁 أرشيف الفواتير", use_container_width=True):
+                go("orders_archive")
+
+        if role == "admin":
+            if st.button("🚚 الموزعين", use_container_width=True):
+                go("distributors")
 
         if st.button("🚪 تسجيل الخروج", use_container_width=True):
             st.session_state.clear()
@@ -538,16 +632,35 @@ if st.session_state.page == "dashboard":
 # Pages
 # =========================================================
 elif st.session_state.page == "customers":
-    customers_page(go, user)
+    if user.get("role") == "admin":
+        customers_page(go, user)
+    else:
+        st.error("ليس لديك صلاحية الوصول")
 
 elif st.session_state.page == "inventory":
-    inventory_page(go, user)
+    if user.get("role") == "admin":
+        inventory_page(go, user)
+    else:
+        st.error("ليس لديك صلاحية الوصول")
 
 elif st.session_state.page == "orders_prep":
-    orders_prep_page(go, user)
+    if user.get("role") in ["admin", "distributor"]:
+        orders_prep_page(go, user)
+    else:
+        st.error("ليس لديك صلاحية الوصول")
+
 
 elif st.session_state.page == "distributors":
-    distributors_page(go, user)
+    if user.get("role") == "admin":
+        distributors_page(go, user)
+    else:
+        st.error("ليس لديك صلاحية الوصول")
+
+elif st.session_state.page == "orders_archive":
+    if user.get("role") == "admin":
+        orders_archive_page(go, user)
+    else:
+        st.error("ليس لديك صلاحية الوصول")
 
 else:
     st.session_state.page = "dashboard"
