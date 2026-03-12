@@ -790,7 +790,7 @@ def orders_prep_page(go, user):
     st.session_state.setdefault("cust_price_map_for", "")
     st.session_state.setdefault("last_debt_payment_amount", 0.0)
     st.session_state.setdefault("last_debt_payment_remaining", 0.0)
-
+    st.session_state.setdefault("last_debt_payment_discount", 0.0)
     # ---------------------------------------------------------------
     # Caches
     #----------------------------------------------------------------
@@ -843,29 +843,51 @@ def orders_prep_page(go, user):
             st.warning(f"⚠️ الذمم الحالية على العميل: {cur_bal:.3f}")
 
             pay_key = f"debt_payment_amount_{cid}"
+            disc_key = f"debt_payment_discount_{cid}"
+
             if pay_key not in st.session_state:
                 st.session_state[pay_key] = None
+            if disc_key not in st.session_state:
+                st.session_state[disc_key] = None
 
-            amount = st.number_input(
+            raw_amount = st.number_input(
                 "مبلغ التسديد",
                 min_value=0.0,
-                max_value=float(cur_bal),
+                max_value=max(0.0, float(cur_bal)),
                 step=0.25,
                 value=st.session_state[pay_key],
                 key=f"debt_payment_input_{cid}",
                 placeholder="أدخل مبلغ التسديد",
+                help="أدخل مبلغ التسديد النقدي هنا",
             )
 
-            st.session_state[pay_key] = amount
-            amount = float(to_float(amount, 0.0))
+            raw_discount = st.number_input(
+                "خصم على الذمم",
+                min_value=0.0,
+                max_value=max(0.0, float(cur_bal)),
+                step=0.25,
+                value=st.session_state[disc_key],
+                key=f"debt_payment_discount_input_{cid}",
+                placeholder="أدخل مبلغ الخصم",
+                help="أدخل مبلغ الخصم من الذمم هنا",
+            )
 
+            st.session_state[pay_key] = raw_amount
+            st.session_state[disc_key] = raw_discount
+
+            amount = float(to_float(raw_amount, 0.0))
+            discount_amount = float(to_float(raw_discount, 0.0))
+
+            total_effect = amount + discount_amount
+            
+            st.caption(f"إجمالي التخفيض على الذمم = تسديد + خصم: {total_effect:.3f}")
             colA, colB = st.columns(2)
 
             with colA:
                 if st.button("✅ حفظ وطباعة السند", use_container_width=True, key=f"save_debt_payment_{cid}"):
                     try:
-                        if amount <= 0:
-                            raise ValueError("أدخل مبلغ تسديد أكبر من صفر")
+                        if total_effect <= 0:
+                            raise ValueError("أدخل مبلغ تسديد أو خصم أكبر من صفر")
 
                         @firestore.transactional
                         def tx_pay_debt(transaction):
@@ -882,10 +904,10 @@ def orders_prep_page(go, user):
                             if bal <= 0:
                                 raise ValueError("لا يوجد ذمم مستحقة على هذا العميل")
 
-                            if amount > bal:
-                                raise ValueError("مبلغ التسديد أكبر من الذمم المستحقة")
+                            if total_effect > bal:
+                                raise ValueError("مجموع التسديد والخصم أكبر من الذمم المستحقة")
 
-                            new_bal = bal - amount
+                            new_bal = bal - total_effect
 
                             transaction.update(cust_ref, {
                                 "balance": new_bal,
@@ -901,6 +923,7 @@ def orders_prep_page(go, user):
                             "invoice_no": "",
                             "type": "debt_payment_only",
                             "amount": float(amount),
+                            "discount_amount": float(discount_amount),
                             "active": True,
                             "created_at": now_iso(),
                             "created_by": user.get("username", ""),
@@ -911,15 +934,18 @@ def orders_prep_page(go, user):
                         _get_customer_prices_map_cached.clear()
                         _get_customer_sales_for_statement.clear()
 
-                        new_remaining = max(0.0, float(cur_bal) - float(amount))
+                        new_remaining = max(0.0, float(cur_bal) - float(total_effect))
                         st.session_state.last_debt_payment_amount = float(amount)
+                        st.session_state.last_debt_payment_discount = float(discount_amount)
                         st.session_state.last_debt_payment_remaining = float(new_remaining)
                         st.session_state._print_mode = "debt_payment_only"
                         st.session_state.active_dialog = "print"
 
                         st.session_state.pop(pay_key, None)
+                        st.session_state.pop(disc_key, None)
                         st.session_state.pop(f"debt_payment_input_{cid}", None)
-
+                        st.session_state.pop(f"debt_payment_discount_input_{cid}", None)
+                      
                         st.rerun()
 
                     except Exception as e:
@@ -928,7 +954,9 @@ def orders_prep_page(go, user):
             with colB:
                 if st.button("❌ إغلاق", use_container_width=True, key=f"cancel_debt_payment_{cid}"):
                     st.session_state.pop(pay_key, None)
+                    st.session_state.pop(disc_key, None)
                     st.session_state.pop(f"debt_payment_input_{cid}", None)
+                    st.session_state.pop(f"debt_payment_discount_input_{cid}", None)
                     st.session_state.active_dialog = None
                     st.rerun()
 
@@ -983,8 +1011,20 @@ def orders_prep_page(go, user):
 
             # ✅ القيمة الداخلية تبدأ فارغة
             if old_debt_state_key not in st.session_state:
-      
                 st.session_state[old_debt_state_key] = None
+
+            raw_old_debt_value = st.session_state.get(old_debt_state_key, None)
+            max_old_debt_value = max(0.0, float(cur_bal)) if cur_bal > 0 else 0.0
+
+            if raw_old_debt_value is not None:
+                current_old_debt_value = float(to_float(raw_old_debt_value, 0.0))
+                if current_old_debt_value < 0:
+                    current_old_debt_value = 0.0
+                if current_old_debt_value > max_old_debt_value:
+                    current_old_debt_value = max_old_debt_value
+                st.session_state[old_debt_state_key] = current_old_debt_value
+            else:
+                current_old_debt_value = None
 
             if cur_bal > 0:
                 col_debt, col_plus = st.columns([4, 1])
@@ -995,7 +1035,7 @@ def orders_prep_page(go, user):
                 with col_plus:
                     if pay == "cash":
                         if st.button("➕", key=f"fill_old_debt_paid_{sid}", use_container_width=True):
-                            st.session_state[old_debt_state_key] = float(cur_bal)
+                            st.session_state[old_debt_state_key] = max(0.0, float(cur_bal))
                             st.rerun()
                     else:
                         st.empty()
@@ -1008,12 +1048,12 @@ def orders_prep_page(go, user):
             old_debt_paid = st.number_input(
                 "تسديد ذمم سابقة",
                 min_value=0.0,
-                max_value=max(0.0, float(cur_bal)) if cur_bal > 0 else 0.0,
+                max_value=max_old_debt_value,
                 step=0.25,
-                value=st.session_state[old_debt_state_key],
+                value=current_old_debt_value,
                 key=old_debt_widget_key,
-                placeholder="أدخل قيمة التسديد",
-                help="أدخل هنا المبلغ الذي تم تسديده من الذمم السابقة، أو اضغط زر + لتعبئة كامل الذمم المستحقة.",
+                placeholder="أدخل مبلغ التسديد",
+                help="أدخل مبلغ تسديد الذمم السابقة من هذا الحقل، أو اضغط زر + لتعبئة كامل الذمم المستحقة.",
                 disabled=(cur_bal <= 0),
             )
 
@@ -1239,24 +1279,27 @@ def orders_prep_page(go, user):
             if mode == "debt_payment_only":
                 cid = st.session_state.get("last_print_customer_id") or ""
                 cust = doc_get("customers", cid) if cid else {}
-                amount = float(to_float(st.session_state.get("last_debt_payment_amount", 0.0), 0.0))
-                remaining = float(to_float(st.session_state.get("last_debt_payment_remaining", 0.0), 0.0))
+
+                amount = float(to_float(st.session_state.get("last_debt_payment_amount", 0.0)))
+                remaining = float(to_float(st.session_state.get("last_debt_payment_remaining", 0.0)))
+
                 html = build_debt_payment_receipt_html(
                     cust or {},
                     amount=amount,
                     remaining=remaining,
-                    company_name="البوادي",
+                    company_name="نظام المخبز",
                     paper=paper
                 )
+
                 show_print_html(html, height=820)
                 return
             
-            sid = st.session_state.get("last_print_sale_id")
-            sale = doc_get("sales", sid) or {}
+            sid = st.session_state.get("last_print_sale_id") or ""
+            sale = (doc_get("sales", sid) or {}) if sid else {}
             sale["id"] = sid
 
             cust_id = sale.get("customer_id") or ""
-            customer = doc_get("customers", cust_id) if cust_id else {}
+            customer = (doc_get("customers", cust_id) or {}) if cust_id else {}
 
             if mode == "receipt":
                 html = build_receipt_html(sale, customer=customer or {}, company_name="نظام المخبز", paper=paper)
