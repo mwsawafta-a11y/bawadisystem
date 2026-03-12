@@ -697,7 +697,7 @@ def show_print_html(html, height=1100):
 #------
 # تسديد ذمم
 #-------
-def build_debt_payment_receipt_html(customer: dict, amount: float, company_name="نظام المخبز", paper="80mm"):
+def build_debt_payment_receipt_html(customer: dict, amount: float, remaining: float, company_name="البوادي", paper="80mm"):
     customer = customer or {}
     cust_name = customer.get("name") or "—"
     phone = customer.get("phone") or ""
@@ -747,6 +747,7 @@ def build_debt_payment_receipt_html(customer: dict, amount: float, company_name=
     <hr/>
 
     <div class="sumrow"><span>المبلغ المقبوض:</span><span><b>{_money(amount)}</b></span></div>
+    <div class="sumrow"><span>المتبقي من الذمم:</span><span><b>{_money(remaining)}</b></span></div>
 
     <hr/>
     <div class="center muted">هذا السند يثبت تسديد ذمم للعميل.</div>
@@ -788,6 +789,7 @@ def orders_prep_page(go, user):
     st.session_state.setdefault("cust_price_map", {})
     st.session_state.setdefault("cust_price_map_for", "")
     st.session_state.setdefault("last_debt_payment_amount", 0.0)
+    st.session_state.setdefault("last_debt_payment_remaining", 0.0)
 
     # ---------------------------------------------------------------
     # Caches
@@ -909,7 +911,9 @@ def orders_prep_page(go, user):
                         _get_customer_prices_map_cached.clear()
                         _get_customer_sales_for_statement.clear()
 
+                        new_remaining = max(0.0, float(cur_bal) - float(amount))
                         st.session_state.last_debt_payment_amount = float(amount)
+                        st.session_state.last_debt_payment_remaining = float(new_remaining)
                         st.session_state._print_mode = "debt_payment_only"
                         st.session_state.active_dialog = "print"
 
@@ -1236,7 +1240,14 @@ def orders_prep_page(go, user):
                 cid = st.session_state.get("last_print_customer_id") or ""
                 cust = doc_get("customers", cid) if cid else {}
                 amount = float(to_float(st.session_state.get("last_debt_payment_amount", 0.0), 0.0))
-                html = build_debt_payment_receipt_html(cust or {}, amount=amount, company_name="نظام المخبز", paper=paper)
+                remaining = float(to_float(st.session_state.get("last_debt_payment_remaining", 0.0), 0.0))
+                html = build_debt_payment_receipt_html(
+                    cust or {},
+                    amount=amount,
+                    remaining=remaining,
+                    company_name="البوادي",
+                    paper=paper
+                )
                 show_print_html(html, height=820)
                 return
             
