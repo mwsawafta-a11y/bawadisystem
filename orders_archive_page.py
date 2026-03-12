@@ -4,6 +4,7 @@ import streamlit.components.v1 as components
 from datetime import datetime, timezone, timedelta, date
 from firebase_config import db
 from firebase_admin import firestore
+import pandas as pd
 
 TZ = timezone(timedelta(hours=3))  # Jordan
 
@@ -578,334 +579,370 @@ def distributor_daily_tab(go, user):
         st.rerun()
     #انتهاء تاب الموزعين    _____________________________
 
-
 def orders_archive_page(go, user):
- tabs = st.tabs(["🧾 الأرشيف (كما هو)", "🚚 محاسبة موزّع يومية (إضافة)"])
- with tabs[0]:
-    st.markdown("<h2 style='text-align:center;'>📁 أرشيف الفواتير + إحصائيات</h2>", unsafe_allow_html=True)
-    st.caption("يعرض الفواتير المُسلّمة (done) فقط. مع فلترة فترة + عميل اختياري + بحث اختياري.")
-    st.divider()
+    tabs = st.tabs(["🧾 الأرشيف (كما هو)", "🚚 محاسبة موزّع يومية (إضافة)"])
 
-    # ✅ صلاحيات (لو عندك role)
-    role = (user or {}).get("role") or ""
-    if role and role not in ("admin", "owner", "superadmin"):
-        st.error("هذه الصفحة للأدمن فقط.")
-        return
+    with tabs[0]:
+        st.markdown("<h2 style='text-align:center;'>📁 أرشيف الفواتير + إحصائيات</h2>", unsafe_allow_html=True)
+        st.caption("يعرض الفواتير المُسلّمة (done) فقط. مع فلترة فترة + عميل اختياري + بحث اختياري.")
+        st.divider()
 
-    # رجوع
-    if st.button("⬅️ رجوع", key="arch_back"):
-        go("orders_prep")  # عدّلها حسب اسم صفحة التحضير عندك في الراوتر
+        role = (user or {}).get("role") or ""
+        if role and role not in ("admin", "owner", "superadmin"):
+            st.error("هذه الصفحة للأدمن فقط.")
+            return
 
-    # ---------
-    # Filters
-    # ---------
-    st.markdown("### 🔎 فلاتر")
-    today = datetime.now(TZ).date()
+        if st.button("⬅️ رجوع", key="arch_back"):
+            go("orders_prep")
 
-    st.session_state.setdefault("arch_from", today - timedelta(days=6))
-    st.session_state.setdefault("arch_to", today)
-    st.session_state.setdefault("arch_preset", None)
+        st.markdown("### 🔎 فلاتر")
+        today = datetime.now(TZ).date()
 
-    # ✅ تطبيق preset قبل إنشاء أي widgets
-    preset = st.session_state.get("arch_preset")
-    if preset == "today":
-        st.session_state["arch_from"] = today
-        st.session_state["arch_to"] = today
-        st.session_state["arch_preset"] = None
-    elif preset == "7d":
-        st.session_state["arch_from"] = today - timedelta(days=6)
-        st.session_state["arch_to"] = today
-        st.session_state["arch_preset"] = None
-    # --- جلب الموزعين ---
-    dist_accounts = get_distributors_list()
+        st.session_state.setdefault("arch_from", today - timedelta(days=6))
+        st.session_state.setdefault("arch_to", today)
+        st.session_state.setdefault("arch_preset", None)
 
-    dist_display = [f"{a['username']} — {a.get('name', a['username'])}" for a in dist_accounts]
 
-    dist_map = {
-        f"{a['username']} — {a.get('name', a['username'])}": a["username"]
-        for a in dist_accounts
-    }
-    c1, c2, c3, c4 = st.columns([1.2, 1.2, 2.2, 2.0])
-    with c1:
-        d_from = st.date_input("من", value=st.session_state.arch_from, key="arch_from")
-    with c2:
-        d_to = st.date_input("إلى", value=st.session_state.arch_to, key="arch_to")
-    with c3:
-        invoice_search = st.text_input("بحث برقم الفاتورة (اختياري)", value="", key="arch_invoice_search").strip()
-    with c4:
-        pick_seller = st.selectbox(
-        "الموزّع (اختياري)",
-        options=["(الكل)"] + dist_display,
-        key="arch_seller_pick"
-        )
+        preset = st.session_state.get("arch_preset")
+        if preset == "today":
+            st.session_state["arch_from"] = today
+            st.session_state["arch_to"] = today
+            st.session_state["arch_preset"] = None
+        elif preset == "7d":
+            st.session_state["arch_from"] = today - timedelta(days=6)
+            st.session_state["arch_to"] = today
+            st.session_state["arch_preset"] = None
 
-    seller_filter = "" if pick_seller == "(الكل)" else dist_map.get(pick_seller, "")
-    if d_to < d_from:
-        st.error("تاريخ (إلى) يجب أن يكون ≥ (من).")
-        return
+        dist_accounts = get_distributors_list()
+        dist_display = [f"{a['username']} — {a.get('name', a['username'])}" for a in dist_accounts]
+        dist_map = {
+            f"{a['username']} — {a.get('name', a['username'])}": a["username"]
+            for a in dist_accounts
+        }
 
-    # عميل اختياري
-    # نجيب العملاء بشكل خفيف من Firestore (يمكنك لاحقاً تعمل cache)
-    customers = list(db.collection("customers").where("active", "==", True).limit(800).stream())
-    cust_list = [{"id": d.id, **(d.to_dict() or {})} for d in customers]
-    cust_map = {c.get("name", c["id"]): c["id"] for c in cust_list}
-    cust_name = st.selectbox("العميل (اختياري)", options=["(الكل)"] + list(cust_map.keys()), index=0, key="arch_customer_pick")
-    customer_id = "" if cust_name == "(الكل)" else cust_map.get(cust_name, "")
-
-    def _set_today():
-        st.session_state["arch_preset"] = "today"
-
-    def _set_7d():
-        st.session_state["arch_preset"] = "7d"
-
-    def _clear_search():
-        st.session_state["arch_invoice_search"] = ""
-    b1, b2, b3 = st.columns(3)
-    with b1:
-     st.button("📌 اليوم", use_container_width=True, on_click=_set_today)
-       
-    with b2:
-     st.button("📆 آخر 7 أيام", use_container_width=True, on_click=_set_7d)
+        c1, c2, c3, c4 = st.columns([1.2, 1.2, 2.2, 2.0])
         
-    with b3:
-     st.button("🧹 تصفير البحث", use_container_width=True, on_click=_clear_search)       
+        with c1:
+            d_from = st.date_input("من", key="arch_from")
+        with c2:
+            d_to = st.date_input("إلى", key="arch_to")
+        with c3:
+            invoice_search = st.text_input("بحث برقم الفاتورة (اختياري)", value="", key="arch_invoice_search").strip()
+        with c4:
+            pick_seller = st.selectbox(
+                "الموزّع (اختياري)",
+                options=["(الكل)"] + dist_display,
+                key="arch_seller_pick"
+            )
 
-    start_iso = _iso_start_of_day(d_from)
-    end_iso = _iso_start_of_next_day(d_to)
+        seller_filter = "" if pick_seller == "(الكل)" else dist_map.get(pick_seller, "")
+        if d_to < d_from:
+            st.error("تاريخ (إلى) يجب أن يكون ≥ (من).")
+            return
 
-    # ---------
-    # Pagination
-    # ---------
-    PAGE_SIZE = 50
-    st.session_state.setdefault("arch_page", 1)
-    st.session_state.setdefault("arch_last_doc", None)
-    st.session_state.setdefault("arch_stack", [])
+        customers = list(db.collection("customers").where("active", "==", True).limit(800).stream())
+        cust_list = [{"id": d.id, **(d.to_dict() or {})} for d in customers]
+        cust_map = {c.get("name", c["id"]): c["id"] for c in cust_list}
+        cust_name = st.selectbox(
+            "العميل (اختياري)",
+            options=["(الكل)"] + list(cust_map.keys()),
+            index=0,
+            key="arch_customer_pick"
+        )
+        customer_id = "" if cust_name == "(الكل)" else cust_map.get(cust_name, "")
 
-    sig = (start_iso, end_iso, customer_id, invoice_search)
-    if st.session_state.get("arch_sig") != sig:
-        st.session_state.arch_sig = sig
-        st.session_state.arch_page = 1
-        st.session_state.arch_last_doc = None
-        st.session_state.arch_stack = []
+        def _set_today():
+            st.session_state["arch_preset"] = "today"
 
-    # ---------
-    # Build query
-    # ---------
-    q = (
-        db.collection("sales")
-        .where("active", "==", True)
-        .where("status", "==", "done")
-    )
+        def _set_7d():
+            st.session_state["arch_preset"] = "7d"
 
-    if invoice_search:
-        # بحث مباشر
-        q = q.where("invoice_no", "==", invoice_search).limit(PAGE_SIZE)
-    else:
-        q = q.where("delivered_at", ">=", start_iso).where("delivered_at", "<", end_iso)
+        def _clear_search():
+            st.session_state["arch_invoice_search"] = ""
 
-        if customer_id:
-            q = q.where("customer_id", "==", customer_id)
+        b1, b2, b3 = st.columns(3)
+        with b1:
+            st.button("📌 اليوم", use_container_width=True, on_click=_set_today)
+        with b2:
+            st.button("📆 آخر 7 أيام", use_container_width=True, on_click=_set_7d)
+        with b3:
+            st.button("🧹 تصفير البحث", use_container_width=True, on_click=_clear_search)
 
-        # فلتر الموزع
-        if seller_filter:
-            q = q.where("seller_username", "==", seller_filter)
+        start_iso = _iso_start_of_day(d_from)
+        end_iso = _iso_start_of_next_day(d_to)
 
-        q = q.order_by("delivered_at", direction=firestore.Query.DESCENDING).limit(PAGE_SIZE)
+        PAGE_SIZE = 50
+        st.session_state.setdefault("arch_page", 1)
+        st.session_state.setdefault("arch_last_doc", None)
+        st.session_state.setdefault("arch_stack", [])
 
-    # Start after cursor for next pages (فقط لو ليس بحث invoice)
-    if (not invoice_search) and st.session_state.arch_last_doc is not None and st.session_state.arch_page > 1:
-        q = q.start_after(st.session_state.arch_last_doc)
+        sig = (start_iso, end_iso, customer_id, invoice_search, seller_filter)
+        if st.session_state.get("arch_sig") != sig:
+            st.session_state["arch_sig"] = sig
+            st.session_state["arch_page"] = 1
+            st.session_state["arch_last_doc"] = None
+            st.session_state["arch_stack"] = []
 
-    docs = list(q.stream())
-    rows = []
-    for d in docs:
-        x = d.to_dict() or {}
-        x["id"] = d.id
-        rows.append(x)
-
-    last_doc = docs[-1] if docs else None
-
-    # ---------
-    # Stats (on-demand)
-    # ---------
-    st.markdown("### 📊 الإحصائيات (done فقط)")
-    calc = st.button("⚡ احسب الإحصائيات", key="arch_calc_stats")
-
-    st.session_state.setdefault("arch_stats_sig", None)
-    st.session_state.setdefault("arch_stats", None)
-
-    if calc:
-        HARD_CAP = 8000  # حماية
-        sq = (
+        q = (
             db.collection("sales")
             .where("active", "==", True)
             .where("status", "==", "done")
-            .limit(HARD_CAP)
         )
 
         if invoice_search:
-            sq = sq.where("invoice_no", "==", invoice_search).limit(HARD_CAP)
+            q = q.where("invoice_no", "==", invoice_search).limit(PAGE_SIZE)
         else:
-            sq = sq.where("delivered_at", ">=", start_iso).where("delivered_at", "<", end_iso)
+            q = q.where("delivered_at", ">=", start_iso).where("delivered_at", "<", end_iso)
+
             if customer_id:
-                sq = sq.where("customer_id", "==", customer_id)
-            sq = sq.limit(HARD_CAP)
+                q = q.where("customer_id", "==", customer_id)
 
-        cnt = 0
-        sum_total = sum_discount = sum_net = sum_paid = sum_unpaid = sum_extra = 0.0
-        cash_cnt = credit_cnt = 0
+            if seller_filter:
+                q = q.where("seller_username", "==", seller_filter)
 
-        for d in sq.stream():
-            cnt += 1
-            sd = d.to_dict() or {}
-            total = prep_to_float(sd.get("total", 0))
-            disc = prep_to_float(sd.get("discount", 0))
-            net = prep_to_float(sd.get("net", total - disc))
-            paid = prep_to_float(sd.get("amount_paid", 0))
-            unpaid = prep_to_float(sd.get("unpaid_debt", 0))
-            extra = prep_to_float(sd.get("extra_credit", 0))
+            q = q.order_by("delivered_at", direction=firestore.Query.DESCENDING).limit(PAGE_SIZE)
 
-            sum_total += total
-            sum_discount += disc
-            sum_net += net
-            sum_paid += paid
-            sum_unpaid += unpaid
-            sum_extra += extra
+        if (not invoice_search) and st.session_state.arch_last_doc is not None and st.session_state.arch_page > 1:
+            q = q.start_after(st.session_state.arch_last_doc)
 
-            p = sd.get("payment_type")
-            if p == "cash":
-                cash_cnt += 1
-            elif p == "credit":
-                credit_cnt += 1
+        docs = list(q.stream())
+        rows = []
+        for d in docs:
+            x = d.to_dict() or {}
+            x["id"] = d.id
+            rows.append(x)
 
-        st.session_state.arch_stats_sig = sig
-        st.session_state.arch_stats = {
-            "cnt": cnt,
-            "total": sum_total,
-            "disc": sum_discount,
-            "net": sum_net,
-            "paid": sum_paid,
-            "unpaid": sum_unpaid,
-            "extra": sum_extra,
-            "cash_cnt": cash_cnt,
-            "credit_cnt": credit_cnt,
-        }
+        last_doc = docs[-1] if docs else None
 
-    stats = st.session_state.arch_stats if st.session_state.arch_stats_sig == sig else None
-    a, b, c, d = st.columns(4)
-    e, f, g, h = st.columns(4)
+        st.markdown("### 📊 الإحصائيات (done فقط)")
+        calc = st.button("⚡ احسب الإحصائيات", key="arch_calc_stats")
 
-    if stats:
-        a.metric("عدد الفواتير", f"{stats['cnt']}")
-        b.metric("الإجمالي", f"{stats['total']:.2f}")
-        c.metric("الخصم", f"{stats['disc']:.2f}")
-        d.metric("الصافي", f"{stats['net']:.2f}")
-        e.metric("المدفوع (Cash)", f"{stats['paid']:.2f}")
-        f.metric("متبقي ذمم", f"{stats['unpaid']:.2f}")
-        g.metric("زيادة كرصد", f"{stats['extra']:.2f}")
-        h.metric("نقدي/ذمم", f"{stats['cash_cnt']} / {stats['credit_cnt']}")
-    else:
-        a.metric("عدد الفواتير", "—"); b.metric("الإجمالي", "—"); c.metric("الخصم", "—"); d.metric("الصافي", "—")
-        e.metric("المدفوع", "—"); f.metric("متبقي", "—"); g.metric("زيادة", "—"); h.metric("نقدي/ذمم", "—")
+        st.session_state.setdefault("arch_stats_sig", None)
+        st.session_state.setdefault("arch_stats", None)
 
-    st.divider()
-    st.markdown("### 🧾 النتائج")
+        if calc:
+            HARD_CAP = 8000
+            sq = (
+                db.collection("sales")
+                .where("active", "==", True)
+                .where("status", "==", "done")
+                .limit(HARD_CAP)
+            )
 
-    # Pagination buttons
-    p1, p2, p3 = st.columns([1, 1, 1])
-    with p1:
-        can_prev = st.session_state.arch_page > 1 and len(st.session_state.arch_stack) > 0 and (not invoice_search)
-        if st.button("⬅️ السابق", disabled=not can_prev, use_container_width=True):
-            st.session_state.arch_last_doc = st.session_state.arch_stack.pop()
-            st.session_state.arch_page -= 1
-            st.rerun()
-    with p2:
-        st.caption(f"الصفحة: {st.session_state.arch_page}")
-    with p3:
-        can_next = (len(docs) == PAGE_SIZE) and (not invoice_search)
-        if st.button("التالي ➡️", disabled=not can_next, use_container_width=True):
-            if st.session_state.arch_last_doc is not None:
-                st.session_state.arch_stack.append(st.session_state.arch_last_doc)
-            st.session_state.arch_last_doc = last_doc
-            st.session_state.arch_page += 1
-            st.rerun()
+            if invoice_search:
+                sq = sq.where("invoice_no", "==", invoice_search).limit(HARD_CAP)
+            else:
+                sq = sq.where("delivered_at", ">=", start_iso).where("delivered_at", "<", end_iso)
+                if customer_id:
+                    sq = sq.where("customer_id", "==", customer_id)
+                if seller_filter:
+                    sq = sq.where("seller_username", "==", seller_filter)
+                sq = sq.limit(HARD_CAP)
 
-    if not rows:
-        st.info("لا توجد نتائج ضمن الفلاتر الحالية.")
-        return
+            cnt = 0
+            sum_total = sum_discount = sum_net = sum_paid = sum_unpaid = sum_extra = 0.0
+            cash_cnt = credit_cnt = 0
 
-    # عرض جدول
-    st.dataframe(
-        [{
+            for d in sq.stream():
+                cnt += 1
+                sd = d.to_dict() or {}
+                total = prep_to_float(sd.get("total", 0))
+                disc = prep_to_float(sd.get("discount", 0))
+                net = prep_to_float(sd.get("net", total - disc))
+                paid = prep_to_float(sd.get("amount_paid", 0))
+                unpaid = prep_to_float(sd.get("unpaid_debt", 0))
+                extra = prep_to_float(sd.get("extra_credit", 0))
+
+                sum_total += total
+                sum_discount += disc
+                sum_net += net
+                sum_paid += paid
+                sum_unpaid += unpaid
+                sum_extra += extra
+
+                p = sd.get("payment_type")
+                if p == "cash":
+                    cash_cnt += 1
+                elif p == "credit":
+                    credit_cnt += 1
+
+            st.session_state["arch_stats_sig"] = sig
+            st.session_state["arch_stats"] = {
+                "cnt": cnt,
+                "total": sum_total,
+                "disc": sum_discount,
+                "net": sum_net,
+                "paid": sum_paid,
+                "unpaid": sum_unpaid,
+                "extra": sum_extra,
+                "cash_cnt": cash_cnt,
+                "credit_cnt": credit_cnt,
+            }
+
+        stats = st.session_state.arch_stats if st.session_state.arch_stats_sig == sig else None
+        a, b, c, d = st.columns(4)
+        e, f, g, h = st.columns(4)
+
+        if stats:
+            a.metric("عدد الفواتير", f"{stats['cnt']}")
+            b.metric("الإجمالي", f"{stats['total']:.2f}")
+            c.metric("الخصم", f"{stats['disc']:.2f}")
+            d.metric("الصافي", f"{stats['net']:.2f}")
+            e.metric("المدفوع (Cash)", f"{stats['paid']:.2f}")
+            f.metric("متبقي ذمم", f"{stats['unpaid']:.2f}")
+            g.metric("زيادة كرصد", f"{stats['extra']:.2f}")
+            h.metric("نقدي/ذمم", f"{stats['cash_cnt']} / {stats['credit_cnt']}")
+        else:
+            a.metric("عدد الفواتير", "—")
+            b.metric("الإجمالي", "—")
+            c.metric("الخصم", "—")
+            d.metric("الصافي", "—")
+            e.metric("المدفوع", "—")
+            f.metric("متبقي", "—")
+            g.metric("زيادة", "—")
+            h.metric("نقدي/ذمم", "—")
+
+        st.divider()
+        st.markdown("### 🧾 النتائج")
+
+        p1, p2, p3 = st.columns([1, 1, 1])
+        with p1:
+            can_prev = st.session_state.arch_page > 1 and len(st.session_state.arch_stack) > 0 and (not invoice_search)
+            if st.button("⬅️ السابق", disabled=not can_prev, use_container_width=True):
+                st.session_state.arch_last_doc = st.session_state.arch_stack.pop()
+                st.session_state.arch_page -= 1
+                st.rerun()
+
+        with p2:
+            st.caption(f"الصفحة: {st.session_state.arch_page}")
+
+        with p3:
+            can_next = (len(docs) == PAGE_SIZE) and (not invoice_search)
+            if st.button("التالي ➡️", disabled=not can_next, use_container_width=True):
+                if st.session_state.arch_last_doc is not None:
+                    st.session_state.arch_stack.append(st.session_state.arch_last_doc)
+                st.session_state.arch_last_doc = last_doc
+                st.session_state.arch_page += 1
+                st.rerun()
+
+        if not rows:
+            st.info("لا توجد نتائج ضمن الفلاتر الحالية.")
+            return
+
+
+
+
+
+
+
+        df = pd.DataFrame([{
             "رقم": r.get("invoice_no") or r.get("ref") or r["id"],
             "تاريخ": _dt_short(r.get("delivered_at") or r.get("updated_at") or r.get("created_at")),
             "العميل": r.get("customer_name") or "—",
             "الدفع": "ذمم" if r.get("payment_type") == "credit" else ("نقدي" if r.get("payment_type") == "cash" else "—"),
             "الصافي": float(prep_to_float(r.get("net", 0))),
-        } for r in rows],
-        use_container_width=True,
-        hide_index=True
-    )
+        } for r in rows])
 
-    # طباعة من الأرشيف (Dialog)
-    st.session_state.setdefault("arch_print_id", None)
-    st.session_state.setdefault("arch_print_mode", "invoice")
+        st.dataframe(
+            df,
+            use_container_width=True,
+            hide_index=True
+        )
+        csv_data = df.to_csv(index=False).encode("utf-8-sig")
 
-    def _render_print_dialog():
-        sid = st.session_state.get("arch_print_id")
-        if not sid or st.session_state.get("active_dialog") != "arch_print":
-            return
+        st.download_button(
+            label="⬇️ تحميل CSV",
+            data=csv_data,
+            file_name=f"archive_{d_from}_{d_to}.csv",
+            mime="text/csv",
+            key="arch_download_csv"
+        )
+        
+        st.session_state.setdefault("arch_print_sid", None)
+        st.session_state.setdefault("arch_print_mode", "invoice")
+        st.session_state.setdefault("arch_print_open", False)
+        st.session_state.setdefault("arch_print_paper", "80mm")
 
-        @st.dialog("🖨️ طباعة من الأرشيف")
-        def _dlg():
-            paper = st.selectbox("نوع الورق", ["80mm", "a4"], index=0, key="arch_print_paper")
-            if st.button("❌ إغلاق", use_container_width=True):
-                st.session_state.active_dialog = None
-                st.session_state.arch_print_id = None
-                st.rerun()
+        st.markdown("### 🖨️ طباعة (آخر النتائج)")
+        for r in rows[:10]:
+            sid = r["id"]
+            inv = r.get("invoice_no") or r.get("ref") or sid
+            ptype = r.get("payment_type")
+            paid = float(prep_to_float(r.get("amount_paid", 0)))
+
+            l, b1, b2 = st.columns([4.2, 0.9, 0.9])
+            with l:
+                st.markdown(f"**{inv}** — {r.get('customer_name','—')} | صافي: **{float(prep_to_float(r.get('net',0))):.2f}**")
+
+            with b1:
+                if st.button("🖨️ فاتورة", use_container_width=True, key=f"arch_inv_{sid}"):
+                    st.session_state["arch_print_sid"] = sid
+                    st.session_state["arch_print_mode"] = "invoice"
+                    st.session_state["arch_print_open"] = True
+                    st.session_state["arch_print_paper"] = "80mm"
+                    st.rerun()
+
+            with b2:
+                can_rec = (ptype == "cash") and (paid > 0)
+                if st.button("🧾 قبض", use_container_width=True, key=f"arch_rec_{sid}", disabled=not can_rec):
+                    st.session_state["arch_print_sid"] = sid
+                    st.session_state["arch_print_mode"] = "receipt"
+                    st.session_state["arch_print_open"] = True
+                    st.session_state["arch_print_paper"] = "80mm"
+                    st.rerun()
+
+            st.divider()
+
+        if st.session_state.get("arch_print_open") and st.session_state.get("arch_print_sid"):
+            st.markdown("### 🖨️ معاينة الطباعة")
+
+            top1, top2 = st.columns([1.4, 1])
+            with top1:
+                paper = st.selectbox(
+                    "نوع الورق",
+                    ["80mm", "a4"],
+                    index=0 if st.session_state.get("arch_print_paper", "80mm") == "80mm" else 1,
+                    key="arch_print_paper_select"
+                )
+                st.session_state["arch_print_paper"] = paper
+
+            with top2:
+                st.write("")
+                st.write("")
+                if st.button("❌ إغلاق المعاينة", use_container_width=True, key="arch_close_preview"):
+                    st.session_state["arch_print_open"] = False
+                    st.session_state["arch_print_sid"] = None
+                    st.session_state["arch_print_mode"] = "invoice"
+                    st.rerun()
+
+            sid = st.session_state.get("arch_print_sid")
+            mode = st.session_state.get("arch_print_mode", "invoice")
 
             sale = doc_get("sales", sid) or {}
             sale["id"] = sid
+
             cust_id = sale.get("customer_id") or ""
             customer = doc_get("customers", cust_id) if cust_id else {}
 
-            mode = st.session_state.get("arch_print_mode", "invoice")
             if mode == "receipt":
-                html = build_receipt_html(sale, customer=customer or {}, company_name="نظام المخبز", paper=paper)
+                html = build_receipt_html(
+                    sale,
+                    customer=customer or {},
+                    company_name="نظام المخبز",
+                    paper=paper
+                )
             else:
-                html = build_invoice_html(sale, customer=customer or {}, company_name="نظام المخبز", paper=paper)
+                html = build_invoice_html(
+                    sale,
+                    customer=customer or {},
+                    company_name="نظام المخبز",
+                    paper=paper
+                )
 
-            show_print_html(html, height=820)
+            if paper == "a4":
+                st.warning("معاينة A4 داخل الصفحة قد لا تظهر كاملة، لكن الطباعة الفعلية تكون من نافذة الطباعة.")
 
-        _dlg()
+            show_print_html(html, height=1100)
 
-    if _supports_dialog() and st.session_state.get("active_dialog") == "arch_print":
-        _render_print_dialog()
-
-    st.markdown("### 🖨️ طباعة (آخر النتائج)")
-    for r in rows[:10]:
-        sid = r["id"]
-        inv = r.get("invoice_no") or r.get("ref") or sid
-        ptype = r.get("payment_type")
-        paid = float(prep_to_float(r.get("amount_paid", 0)))
-
-        l, b1, b2 = st.columns([4.2, 0.9, 0.9])
-        with l:
-            st.markdown(f"**{inv}** — {r.get('customer_name','—')} | صافي: **{float(prep_to_float(r.get('net',0))):.2f}**")
-        with b1:
-            if st.button("🖨️ فاتورة", use_container_width=True, key=f"arch_inv_{sid}"):
-                st.session_state.arch_print_id = sid
-                st.session_state.arch_print_mode = "invoice"
-                st.session_state.active_dialog = "arch_print"
-                st.rerun()
-        with b2:
-            can_rec = (ptype == "cash") and (paid > 0)
-            if st.button("🧾 قبض", use_container_width=True, key=f"arch_rec_{sid}", disabled=not can_rec):
-                st.session_state.arch_print_id = sid
-                st.session_state.arch_print_mode = "receipt"
-                st.session_state.active_dialog = "arch_print"
-                st.rerun()
-
-        st.divider()
- with tabs[1]:
-    distributor_daily_tab(go, user)
+    with tabs[1]:
+        distributor_daily_tab(go, user)

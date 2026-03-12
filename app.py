@@ -329,9 +329,6 @@ def get_today_report_cached(ttl_seconds=30, limit_sales=900, limit_cols=900):
 # Printing + Export
 # =========================================================
 def build_today_report_html(rep: dict, company_name="نظام المخبز", paper="a4", cashier_name=""):
-    width_css = "850px"
-    font_css = "14px"
-
     rows = rep.get("rows", []) or []
     rows = rows[-120:]
 
@@ -351,24 +348,147 @@ def build_today_report_html(rep: dict, company_name="نظام المخبز", pap
 
     html = f"""
 <!doctype html>
-<html>
+<html dir="rtl">
 <head>
 <meta charset="utf-8"/>
+
 <style>
-body {{ font-family: Arial; margin:0; padding:0; }}
-.wrap {{ width:{width_css}; margin:auto; padding:12px; font-size:{font_css}; }}
-.center {{ text-align:center; }}
-hr {{ border:none; border-top:1px dashed #999; margin:10px 0; }}
-table {{ width:100%; border-collapse: collapse; }}
-td,th {{ border-bottom:1px solid #eee; padding:5px 3px; text-align:right; vertical-align:top; }}
-.small {{ color:#666; font-size: 0.9em; }}
-.sig {{ margin-top: 14px; display:flex; justify-content:space-between; gap: 18px; }}
-.sig div {{ width: 50%; border-top:1px solid #ddd; padding-top:8px; }}
-.btnbar {{ margin-top:12px; }}
-button {{ width:100%; padding:10px; cursor:pointer; }}
+@page {{
+  size: 58mm auto;
+  margin: 0;
+}}
+
+* {{
+  box-sizing: border-box;
+}}
+
+html, body {{
+  width: 58mm;
+  margin: 0;
+  padding: 0;
+  background: #eee;
+}}
+
+body {{
+  font-size: 15px;
+}}
+
+.wrap {{
+  width: 56mm;
+  max-width: 56mm;
+  background: white;
+  margin: 0 auto;
+  padding: 1mm;
+}}
+
+td:last-child {{
+  padding-left: 4px;
+}}
+
+.center {{
+  text-align: center;
+}}
+
+.title-main {{
+  font-size: 18px;
+  font-weight: 900;
+}}
+
+.title-sub {{
+  font-size: 15px;
+  font-weight: 900;
+  margin-top: 4px;
+}}
+
+hr {{
+  border: none;
+  border-top: 1px dashed #555;
+  margin: 6px 0;
+}}
+
+.row {{
+  margin: 3px 0;
+  font-size: 14px;
+  font-weight: bold;
+}}
+
+table {{
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}}
+
+th, td {{
+  border-bottom: 1px solid #ddd;
+  padding: 5px 4px 5px 2px;
+  text-align: right;
+  vertical-align: top;
+  font-weight: bold;
+  word-break: break-word;
+  overflow-wrap: break-word;
+}}
+td:first-child {{
+  padding-right: 6px;
+}}
+th {{
+  font-size: 12px;
+}}
+
+td {{
+  font-size: 12px;
+}}
+
+.small {{
+  color: #444;
+  font-size: 11px;
+  font-weight: bold;
+}}
+
+.sig {{
+  margin-top: 10px;
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+}}
+
+.sig div {{
+  width: 48%;
+  border-top: 1px solid #999;
+  padding-top: 5px;
+  font-size: 11px;
+  font-weight: bold;
+}}
+
+.btnbar {{
+  margin-top: 10px;
+}}
+
+button {{
+  width: 100%;
+  padding: 10px;
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: bold;
+}}
+
 @media print {{
-  .btnbar {{ display:none; }}
-  .wrap {{ width: 100%; }}
+  .btnbar {{
+    display: none;
+  }}
+
+  html, body {{
+    width: 58mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: white;
+  }}
+
+  .wrap {{
+    width: 56mm !important;
+    max-width: 56mm !important;
+    margin: 0 auto !important;
+    padding: 1mm !important;
+  }}
 }}
 </style>
 </head>
@@ -376,34 +496,34 @@ button {{ width:100%; padding:10px; cursor:pointer; }}
 <div class="wrap">
 
 <div class="center">
-  <div style="font-size:18px;font-weight:800;">{company_name}</div>
-  <div style="font-weight:800;margin-top:6px;">كشف مبيعات اليوم</div>
+  <div class="title-main">{company_name}</div>
+  <div class="title-sub">كشف مبيعات اليوم</div>
   <div class="small">{rep.get("today","")}</div>
 </div>
 
 <hr/>
 
-<div>💰 <b>إجمالي المبيعات:</b> {rep.get("total_sales",0):.3f}</div>
-<div>🧾 <b>مبيعات نقدي:</b> {rep.get("cash_sales_total",0):.3f}</div>
-<div>📌 <b>مبيعات ذمم:</b> {rep.get("credit_sales_total",0):.3f}</div>
+<div class="row">💰 إجمالي المبيعات: {rep.get("total_sales",0):.3f}</div>
+<div class="row">🧾 مبيعات نقدي: {rep.get("cash_sales_total",0):.3f}</div>
+<div class="row">📌 مبيعات ذمم: {rep.get("credit_sales_total",0):.3f}</div>
 
 <hr/>
 
-<div>💵 <b>المقبوض اليوم:</b> {rep.get("total_received",0):.3f}</div>
-<div>🏦 <b>النقد بالصندوق اليوم:</b> {rep.get("cash_in_box",0):.3f}</div>
-<div>🧾 <b>ذمم اليوم (متبقي):</b> {rep.get("unpaid_today",0):.3f}</div>
-<div>📦 <b>عدد الفواتير:</b> {rep.get("invoices_count",0)}</div>
+<div class="row">💵 المقبوض اليوم: {rep.get("total_received",0):.3f}</div>
+<div class="row">🏦 النقد بالصندوق اليوم: {rep.get("cash_in_box",0):.3f}</div>
+<div class="row">🧾 ذمم اليوم (متبقي): {rep.get("unpaid_today",0):.3f}</div>
+<div class="row">📦 عدد الفواتير: {rep.get("invoices_count",0)}</div>
 
 <hr/>
 
 <table>
 <thead>
 <tr>
-<th>وقت</th>
-<th>نوع</th>
-<th>دفع</th>
-<th>عميل</th>
-<th>مبلغ</th>
+<th style="width:17%;">وقت</th>
+<th style="width:13%;">نوع</th>
+<th style="width:15%;">دفع</th>
+<th style="width:35%;">عميل</th>
+<th style="width:20%;">مبلغ</th>
 </tr>
 </thead>
 <tbody>
@@ -497,107 +617,113 @@ if role not in ["admin", "distributor"]:
 # =========================================================
 # Dashboard
 # =========================================================
+# =========================================================
+# Dashboard
+# =========================================================
 if st.session_state.page == "dashboard":
     st.markdown("<h2 style='text-align:center;'>لوحة التحكم</h2>", unsafe_allow_html=True)
     st.caption(f"مرحبًا: {user.get('username','')}")
 
-    # ---------- Alerts ----------
-    alerts = get_alerts_cached(ttl_seconds=30, limit_each=200)
+    # ==============================
+    # ADMIN ONLY
+    # ==============================
+    if user.get("role") == "admin":
+        # ---------- Alerts ----------
+        alerts = get_alerts_cached(ttl_seconds=30, limit_each=200)
 
-    st.markdown("""
-    <style>
-    .bell-red button { background:#ff4b4b!important; color:white!important; border:0!important; }
-    .bell-yellow button { background:#f4c542!important; color:#111!important; border:0!important; }
-    .bell-gray button { background:#f1f1f1!important; color:#444!important; border:0!important; }
-    </style>
-    """, unsafe_allow_html=True)
+        st.markdown("""
+        <style>
+        .bell-red button { background:#ff4b4b!important; color:white!important; border:0!important; }
+        .bell-yellow button { background:#f4c542!important; color:#111!important; border:0!important; }
+        .bell-gray button { background:#f1f1f1!important; color:#444!important; border:0!important; }
+        </style>
+        """, unsafe_allow_html=True)
 
-    if alerts["out"] > 0:
-        bell_class = "bell-red"
-    elif alerts["low"] > 0:
-        bell_class = "bell-yellow"
-    else:
-        bell_class = "bell-gray"
-
-    bell_label = f"🔔 {alerts['total']}" if alerts["total"] > 0 else "🔔"
-
-    spacer, bell_col = st.columns([9, 1])
-    with bell_col:
-        st.markdown(f'<div class="{bell_class}">', unsafe_allow_html=True)
-        if st.button(bell_label, key="btn_bell", use_container_width=True):
-            st.session_state.show_alerts = not st.session_state.show_alerts
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    if st.session_state.show_alerts:
-        if alerts["total"] == 0:
-            st.success("✅ لا يوجد تنبيهات مخزون حالياً")
+        if alerts["out"] > 0:
+            bell_class = "bell-red"
+        elif alerts["low"] > 0:
+            bell_class = "bell-yellow"
         else:
-            if alerts["out"] > 0:
-                st.error(f"🔴 يوجد {alerts['out']} صنف/أصناف منتهية")
-            if alerts["low"] > 0:
-                st.warning(f"🟡 يوجد {alerts['low']} صنف/أصناف تحت حد إعادة الطلب")
-            st.dataframe(alerts["rows"], use_container_width=True, hide_index=True)
+            bell_class = "bell-gray"
 
-    st.divider()
+        bell_label = f"🔔 {alerts['total']}" if alerts["total"] > 0 else "🔔"
 
-    # ---------- Today Report ----------
-    rep = get_today_report_cached(ttl_seconds=30, limit_sales=900, limit_cols=900)
+        spacer, bell_col = st.columns([9, 1])
+        with bell_col:
+            st.markdown(f'<div class="{bell_class}">', unsafe_allow_html=True)
+            if st.button(bell_label, key="btn_bell", use_container_width=True):
+                st.session_state.show_alerts = not st.session_state.show_alerts
+            st.markdown("</div>", unsafe_allow_html=True)
 
-    with st.expander(f"📊 ملخص اليوم ({rep['today']})", expanded=False):
+        if st.session_state.show_alerts:
+            if alerts["total"] == 0:
+                st.success("✅ لا يوجد تنبيهات مخزون حالياً")
+            else:
+                if alerts["out"] > 0:
+                    st.error(f"🔴 يوجد {alerts['out']} صنف/أصناف منتهية")
+                if alerts["low"] > 0:
+                    st.warning(f"🟡 يوجد {alerts['low']} صنف/أصناف تحت حد إعادة الطلب")
+                st.dataframe(alerts["rows"], use_container_width=True, hide_index=True)
 
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("💰 إجمالي المبيعات", f"{rep['total_sales']:.3f}")
-        m2.metric("💵 المقبوض اليوم", f"{rep['total_received']:.3f}")
-        m3.metric("🧾 ذمم اليوم (متبقي)", f"{rep['unpaid_today']:.3f}")
-        m4.metric("📦 عدد الفواتير", f"{rep['invoices_count']}")
+        st.divider()
 
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("🧾 مبيعات نقدي", f"{rep['cash_sales_total']:.3f}")
-        c2.metric("📌 مبيعات ذمم", f"{rep['credit_sales_total']:.3f}")
-        c3.metric("🏦 النقد بالصندوق اليوم", f"{rep['cash_in_box']:.3f}")
-        c4.metric("🧾 سندات القبض اليوم", f"{rep['collections_total']:.3f}")
+        # ---------- Today Report ----------
+        rep = get_today_report_cached(ttl_seconds=30, limit_sales=900, limit_cols=900)
 
-        # ✅ أدوات: طباعة A4 + تنزيل (بدون خيار ورق)
-        a2, a3 = st.columns([1.6, 2.2])
+        with st.expander(f"📊 ملخص اليوم ({rep['today']})", expanded=False):
 
-        with a2:
-            if st.button("🖨️ طباعة كشف اليوم (A4)", use_container_width=True, key="today_print_btn"):
-                html = build_today_report_html(
-                    rep,
-                    company_name="نظام المخبز",
-                    paper="a4",
-                    cashier_name=user.get("username", "")
-                )
-                st.components.v1.html(html, height=900, scrolling=True)
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("💰 إجمالي المبيعات", f"{rep['total_sales']:.3f}")
+            m2.metric("💵 المقبوض اليوم", f"{rep['total_received']:.3f}")
+            m3.metric("🧾 ذمم اليوم (متبقي)", f"{rep['unpaid_today']:.3f}")
+            m4.metric("📦 عدد الفواتير", f"{rep['invoices_count']}")
 
-        with a3:
-            try:
-                xbytes = export_today_excel(rep)
-                st.download_button(
-                    "📥 تنزيل Excel (اليوم)",
-                    data=xbytes,
-                    file_name=f"today_report_{rep['today']}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
-                )
-            except Exception:
-                df = pd.DataFrame(rep.get("rows", []) or [])
-                csv_bytes = df.to_csv(index=False).encode("utf-8-sig")
-                st.download_button(
-                    "📥 تنزيل CSV (اليوم)",
-                    data=csv_bytes,
-                    file_name=f"today_report_{rep['today']}.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("🧾 مبيعات نقدي", f"{rep['cash_sales_total']:.3f}")
+            c2.metric("📌 مبيعات ذمم", f"{rep['credit_sales_total']:.3f}")
+            c3.metric("🏦 النقد بالصندوق اليوم", f"{rep['cash_in_box']:.3f}")
+            c4.metric("🧾 سندات القبض اليوم", f"{rep['collections_total']:.3f}")
 
-    with st.expander("📄 تفاصيل اليوم (بيع + قبض)", expanded=False):
-        if not rep["rows"]:
-            st.info("لا توجد حركات اليوم حتى الآن.")
-        else:
-            st.dataframe(rep["rows"], use_container_width=True, hide_index=True)
+            a2, a3 = st.columns([1.6, 2.2])
 
-    st.divider()
+            with a2:
+                if st.button("🖨️ طباعة كشف اليوم (A4)", use_container_width=True, key="today_print_btn"):
+                    html = build_today_report_html(
+                        rep,
+                        company_name="نظام المخبز",
+                        paper="a4",
+                        cashier_name=user.get("username", "")
+                    )
+                    st.components.v1.html(html, height=900, scrolling=True)
+
+            with a3:
+                try:
+                    xbytes = export_today_excel(rep)
+                    st.download_button(
+                        "📥 تنزيل Excel (اليوم)",
+                        data=xbytes,
+                        file_name=f"today_report_{rep['today']}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+                except Exception:
+                    df = pd.DataFrame(rep.get("rows", []) or [])
+                    csv_bytes = df.to_csv(index=False).encode("utf-8-sig")
+                    st.download_button(
+                        "📥 تنزيل CSV (اليوم)",
+                        data=csv_bytes,
+                        file_name=f"today_report_{rep['today']}.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+
+        with st.expander("📄 تفاصيل اليوم (بيع + قبض)", expanded=False):
+            if not rep["rows"]:
+                st.info("لا توجد حركات اليوم حتى الآن.")
+            else:
+                st.dataframe(rep["rows"], use_container_width=True, hide_index=True)
+
+        st.divider()
 
     # ---------- Navigation Buttons ----------
     left, center, right = st.columns([1.2, 2.2, 1.2])
@@ -611,23 +737,19 @@ if st.session_state.page == "dashboard":
             if st.button("📦 إدارة المستودع", use_container_width=True):
                 go("inventory")
 
+            if st.button("📁 أرشيف الفواتير", use_container_width=True):
+                go("orders_archive")
+
+            if st.button("🚚 الموزعين", use_container_width=True):
+                go("distributors")
+
         if role in ["admin", "distributor"]:
             if st.button("🧑‍🍳 تحضير الأوردرات", use_container_width=True):
                 go("orders_prep")
 
-        if user.get("role") == "admin":
-            if st.button("📁 أرشيف الفواتير", use_container_width=True):
-                go("orders_archive")
-
-        if role == "admin":
-            if st.button("🚚 الموزعين", use_container_width=True):
-                go("distributors")
-
         if st.button("🚪 تسجيل الخروج", use_container_width=True):
             st.session_state.clear()
             st.rerun()
-
-
 # =========================================================
 # Pages
 # =========================================================

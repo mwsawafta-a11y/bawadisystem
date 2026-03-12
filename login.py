@@ -1,13 +1,25 @@
 import streamlit as st
 import hashlib
 from firebase_config import db
-
+import json
+from streamlit.components.v1 import html
 
 def hash_password(pw: str) -> str:
     return hashlib.sha256((pw or "").encode("utf-8")).hexdigest()
 
 
 def login(go=None):
+    # محاولة استرجاع تسجيل الدخول من المتصفح
+    
+
+    html("""
+    <script>
+    const user = localStorage.getItem("login_user");
+    if (user){
+        window.parent.postMessage({type: "streamlit:setSessionState", key: "user", value: JSON.parse(user)}, "*");
+    }
+    </script>
+    """, height=0)
     # =========================================================
     # 1) Already logged in?
     # =========================================================
@@ -66,7 +78,11 @@ def login(go=None):
 
         st.session_state["user"] = user
         st.session_state["is_authed"] = True
-
+        st.components.v1.html(f"""
+        <script>
+        localStorage.setItem("login_user", '{json.dumps(user)}');
+        </script>
+        """, height=0)
         # تنظيف الحقول
         st.session_state.pop("login_password", None)
 

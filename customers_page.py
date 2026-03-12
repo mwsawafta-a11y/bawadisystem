@@ -44,25 +44,52 @@ def doc_soft_delete(collection: str, doc_id: str):
     db.collection(collection).document(doc_id).set(
         {"active": False, "updated_at": now_iso()}, merge=True
     )
+    
 def add_collection(customer: dict, amount: float, user: dict, note: str = "", status: str = "posted"):
     customer = customer or {}
     cid = customer.get("id") or ""
     cname = customer.get("name") or cid
+    amt = float(to_float(amount, 0.0))
+
+    if not cid:
+        raise ValueError("معرف العميل غير موجود")
+    if amt <= 0:
+        raise ValueError("مبلغ السند يجب أن يكون أكبر من صفر")
 
     doc_id = f"col__{cid}__{int(datetime.now().timestamp()*1000)}"
-    doc_set("collections", doc_id, {
-        "customer_id": cid,
-        "customer_name": cname,
-        "amount": float(amount),
-        "note": (note or "").strip(),
-        "status": status,  # posted / done
-        "active": True,
-        "created_at": now_iso(),
-        "updated_at": now_iso(),
-        "created_by": user.get("username", ""),
-    }, merge=True)
+
+    @firestore.transactional
+    def tx_add_collection(transaction):
+        cust_ref = db.collection("customers").document(cid)
+        cust_snap = cust_ref.get(transaction=transaction)
+
+        if not cust_snap.exists:
+            raise ValueError("العميل غير موجود")
+
+        cust_data = cust_snap.to_dict() or {}
+        cur_balance = float(to_float(cust_data.get("balance", 0.0)))
+        new_balance = cur_balance - amt
+
+        col_ref = db.collection("collections").document(doc_id)
+        transaction.set(col_ref, {
+            "customer_id": cid,
+            "customer_name": cname,
+            "amount": amt,
+            "note": (note or "").strip(),
+            "status": status,
+            "active": True,
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+            "created_by": user.get("username", ""),
+        }, merge=True)
+
+        transaction.update(cust_ref, {
+            "balance": new_balance,
+            "updated_at": now_iso(),
+        })
+
+    tx_add_collection(db.transaction())
     return doc_id
-    
 
 def _safe_created_at(x: dict):
     return x.get("created_at") or ""
@@ -278,12 +305,181 @@ def build_customer_full_statement_html(customer: dict, rows: list, final_balance
     phone = customer.get("phone") or ""
     dt = datetime.now(timezone(timedelta(hours=3))).strftime("%Y-%m-%d %H:%M:%S")
 
-    width_css = "800px" if paper == "a4" else "280px"
-    font_css = "14px" if paper == "a4" else "12px"
-
-    # اعرض آخر 80 سطر بالطباعة عشان ما تصير طويلة
     rows = rows[-80:] if rows else []
 
+    if paper == "80mm":
+        body_rows = ""
+        for r in rows:
+            body_rows += f"""
+            <div class="mv">
+              <div class="line"><span>التاريخ</span><span>{r.get("التاريخ","")}</span></div>
+              <div class="line"><span>النوع</span><span>{r.get("النوع","")}</span></div>
+              <div class="line"><span>المرجع</span><span>{r.get("المرجع","")}</span></div>
+              <div class="line"><span>الصافي</span><span>{_money(r.get("الصافي",0))}</span></div>
+              <div class="line"><span>المدفوع</span><span>{_money(r.get("المدفوع",0))}</span></div>
+              <div class="line"><span>متبقي</span><span>{_money(r.get("متبقي ذمم",0))}</span></div>
+              <div class="line"><span>زيادة</span><span>{_money(r.get("زيادة كرصد",0))}</span></div>
+              <div class="line"><span>أثر</span><span>{_money(r.get("أثر على الرصيد",0))}</span></div>
+              <div class="line total"><span>الرصيد</span><span>{_money(r.get("الرصيد بعد العملية",0))}</span></div>
+            </div>
+            <hr/>
+            """
+
+        html = f"""
+<!doctype html>
+<html dir="rtl">
+<head>
+<meta charset="utf-8"/>
+<title>Customer Statement</title>
+<style>
+  @page {{
+    size: 80mm auto;
+    margin: 0;
+  }}
+
+  * {{
+    box-sizing: border-box;
+  }}
+
+  html, body {{
+    margin: 0;
+    padding: 0;
+    width: 80mm;
+    background: #fff;
+    font-family: Arial, sans-serif;
+    font-size: 12px;
+    direction: rtl;
+  }}
+
+  body {{
+    font-weight: bold;
+  }}
+
+  .wrap {{
+    width: 76mm;
+    max-width: 76mm;
+    margin: 0 auto;
+    padding: 2mm 1.5mm 2mm 1.5mm;
+  }}
+
+  .center {{
+    text-align: center;
+  }}
+
+  .muted {{
+    color: #666;
+  }}
+
+  hr {{
+    border: none;
+    border-top: 1px dashed #777;
+    margin: 6px 0;
+  }}
+
+  .sumrow {{
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 4px 0;
+  }}
+
+  .sumrow span:first-child {{
+    white-space: nowrap;
+  }}
+
+  .sumrow span:last-child {{
+    text-align: left;
+    word-break: break-word;
+  }}
+
+  .mv {{
+    padding: 2px 0;
+  }}
+
+  .line {{
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 2px 0;
+  }}
+
+  .line span:first-child {{
+    min-width: 68px;
+    white-space: nowrap;
+  }}
+
+  .line span:last-child {{
+    text-align: left;
+    word-break: break-word;
+  }}
+
+  .total {{
+    font-size: 13px;
+    border-top: 1px solid #ccc;
+    padding-top: 4px;
+    margin-top: 4px;
+  }}
+
+  .btnbar {{
+    margin-top: 10px;
+  }}
+
+  button {{
+    width: 100%;
+    padding: 10px;
+    font-size: 14px;
+    cursor: pointer;
+  }}
+
+  @media print {{
+    html, body {{
+      width: 80mm;
+      background: #fff;
+    }}
+
+    .wrap {{
+      width: 76mm;
+      max-width: 76mm;
+      margin: 0 auto;
+      padding: 1.5mm 1mm 1.5mm 1mm;
+    }}
+
+    .btnbar {{
+      display: none;
+    }}
+  }}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="center">
+      <div style="font-size:18px;font-weight:900;">{company_name}</div>
+      <div style="margin-top:4px;font-size:14px;font-weight:900;">كشف حساب عميل</div>
+    </div>
+
+    <hr/>
+
+    <div class="sumrow"><span>العميل:</span><span>{cust_name}</span></div>
+    {f"<div class='sumrow'><span>الهاتف:</span><span>{phone}</span></div>" if phone else ""}
+    <div class="sumrow"><span>الرصيد الحالي:</span><span>{_money(final_balance)}</span></div>
+    <div class="sumrow"><span>تاريخ الطباعة:</span><span>{dt}</span></div>
+
+    <hr/>
+
+    {body_rows if body_rows else "<div class='center muted'>لا توجد حركات.</div>"}
+
+    <div class="btnbar">
+      <button onclick="window.print()">🖨️ طباعة الآن</button>
+    </div>
+  </div>
+</body>
+</html>
+"""
+        return html
+
+    # =========================
+    # A4
+    # =========================
     body_rows = ""
     for r in rows:
         body_rows += f"""
@@ -302,32 +498,97 @@ def build_customer_full_statement_html(customer: dict, rows: list, final_balance
 
     html = f"""
 <!doctype html>
-<html>
+<html dir="rtl">
 <head>
 <meta charset="utf-8"/>
 <title>Customer Statement</title>
 <style>
-  body {{ font-family: Arial, sans-serif; margin: 0; padding: 0; }}
-  .wrap {{ width: {width_css}; margin: 0 auto; padding: 12px; font-size: {font_css}; }}
-  .center {{ text-align: center; }}
-  .muted {{ color: #666; }}
-  hr {{ border: none; border-top: 1px dashed #999; margin: 10px 0; }}
-  table {{ width: 100%; border-collapse: collapse; }}
-  th, td {{ padding: 6px 3px; border-bottom: 1px solid #eee; text-align: right; vertical-align: top; }}
-  th {{ border-bottom: 1px solid #ddd; }}
-  .sumrow {{ display: flex; justify-content: space-between; margin-top: 6px; }}
-  .btnbar {{ margin: 10px 0 0 0; display: flex; gap: 8px; }}
-  button {{ padding: 10px 12px; cursor: pointer; width: 100%; }}
+  @page {{
+    size: A4;
+    margin: 10mm;
+  }}
+
+  * {{
+    box-sizing: border-box;
+  }}
+
+  body {{
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+    direction: rtl;
+    background: #fff;
+    font-size: 13px;
+  }}
+
+  .wrap {{
+    width: 100%;
+    margin: 0 auto;
+    padding: 0;
+  }}
+
+  .center {{
+    text-align: center;
+  }}
+
+  .muted {{
+    color: #666;
+  }}
+
+  hr {{
+    border: none;
+    border-top: 1px dashed #999;
+    margin: 10px 0;
+  }}
+
+  table {{
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+  }}
+
+  th, td {{
+    padding: 6px 4px;
+    border: 1px solid #ddd;
+    text-align: right;
+    vertical-align: top;
+    word-wrap: break-word;
+    font-size: 12px;
+  }}
+
+  th {{
+    background: #f5f5f5;
+  }}
+
+  .sumrow {{
+    display: flex;
+    justify-content: space-between;
+    margin-top: 6px;
+  }}
+
+  .btnbar {{
+    margin: 10px 0 0 0;
+    display: flex;
+    gap: 8px;
+  }}
+
+  button {{
+    padding: 10px 12px;
+    cursor: pointer;
+    width: 100%;
+  }}
+
   @media print {{
-    .btnbar {{ display: none; }}
-    .wrap {{ width: 100%; }}
+    .btnbar {{
+      display: none;
+    }}
   }}
 </style>
 </head>
 <body>
   <div class="wrap">
     <div class="center">
-      <div style="font-size:18px;font-weight:700;">{company_name}</div>
+      <div style="font-size:20px;font-weight:700;">{company_name}</div>
       <div style="margin-top:6px;font-weight:700;">كشف حساب عميل (نقدي + ذمم)</div>
     </div>
 
