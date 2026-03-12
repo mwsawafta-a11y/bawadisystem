@@ -979,6 +979,7 @@ def orders_prep_page(go, user):
 
             # ✅ القيمة الداخلية تبدأ فارغة
             if old_debt_state_key not in st.session_state:
+      
                 st.session_state[old_debt_state_key] = None
 
             if cur_bal > 0:
