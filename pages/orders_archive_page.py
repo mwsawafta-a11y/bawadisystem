@@ -5,8 +5,18 @@ from datetime import datetime, timezone, timedelta, date
 from firebase_config import db
 from firebase_admin import firestore
 import pandas as pd
-
+from utils.helpers import now_iso, to_int
+from services.firestore_queries import doc_get
 TZ = timezone(timedelta(hours=3))  # Jordan
+
+from utils.helpers import now_iso, to_int, to_float as prep_to_float
+from services.firestore_queries import doc_get
+from components.printing import (
+    build_invoice_html,
+    build_receipt_html,
+    show_print_html,
+)
+from .orders_prep_page import _supports_dialog
 
 def _iso_start_of_day(d: date) -> str:
     return datetime(d.year, d.month, d.day, 0, 0, 0, tzinfo=TZ).isoformat()
@@ -19,9 +29,8 @@ def _dt_short(x):
 
 # ✅ استيراد نفس دوال الطباعة والمساعدات من orders_prep_page حتى يكون نفس شكل الفاتورة 100%
 # إذا اسم الملف عندك مختلف عدّله هنا
-from orders_prep_page import (
+from .orders_prep_page import (
     to_float as prep_to_float,
-    doc_get,
     _supports_dialog,
     build_invoice_html,
     build_receipt_html,
@@ -34,18 +43,6 @@ from orders_prep_page import (
 #----------------------------------
 # تاب الموزعين - اغلاق يومي 
 #_________________________________________
-
-def now_iso():
-    return datetime.now(TZ).isoformat()
-
-def to_int(x, default=0):
-    try:
-        return int(x)
-    except Exception:
-        return default
-
-
-
 
 
 # --------- products cache (names only for display) ----------

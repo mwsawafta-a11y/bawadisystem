@@ -4,13 +4,15 @@ from io import BytesIO
 
 import pandas as pd
 from firebase_config import db
-from login import login
+from pages.login import login
 
-from inventory_page import inventory_page
-from orders_prep_page import orders_prep_page
-from customers_page import customers_page
-from distributors_page import distributors_page
-from orders_archive_page import orders_archive_page
+from pages.customers_page import customers_page
+from pages.distributors_page import distributors_page
+from pages.inventory_page import inventory_page
+from pages.orders_prep_page import orders_prep_page
+from pages.orders_archive_page import orders_archive_page
+from pages.payments_page import payments_page
+from pages.sales_page import sales_page
 
 st.set_page_config(
     page_title="نظام المخبز",
