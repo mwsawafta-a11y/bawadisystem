@@ -15,7 +15,7 @@ from pages.payments_page import payments_page
 from pages.sales_page import sales_page
 
 st.set_page_config(
-    page_title="نظام المخبز",
+    page_title="مخابز البوادي",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
@@ -330,7 +330,7 @@ def get_today_report_cached(ttl_seconds=30, limit_sales=900, limit_cols=900):
 # =========================================================
 # Printing + Export
 # =========================================================
-def build_today_report_html(rep: dict, company_name="نظام المخبز", paper="a4", cashier_name=""):
+def build_today_report_html(rep: dict, company_name="مخابز البوادي", paper="a4", cashier_name=""):
     rows = rep.get("rows", []) or []
     rows = rows[-120:]
 
@@ -692,7 +692,7 @@ if st.session_state.page == "dashboard":
                 if st.button("🖨️ طباعة كشف اليوم (A4)", use_container_width=True, key="today_print_btn"):
                     html = build_today_report_html(
                         rep,
-                        company_name="نظام المخبز",
+                        company_name="مخابز البوادي",
                         paper="a4",
                         cashier_name=user.get("username", "")
                     )

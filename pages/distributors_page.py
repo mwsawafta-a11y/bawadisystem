@@ -138,7 +138,7 @@ def _build_dist_statement(dist: dict, moves: list):
 # ---------------------------
 # Printing HTML
 # ---------------------------
-def build_distributor_statement_html(dist: dict, rows: list, final_balance: int, company_name="نظام المخبز", paper="80mm"):
+def build_distributor_statement_html(dist: dict, rows: list, final_balance: int, company_name="مخابز البوادي", paper="80mm"):
     name = dist.get("name") or dist.get("id") or "—"
     phone = dist.get("phone") or ""
     money_bal = to_float(dist.get("money_balance", 0))
@@ -750,7 +750,7 @@ def distributors_page(go, user):
                     dist=dist,
                     rows=rows,
                     final_balance=final_balance,
-                    company_name="نظام المخبز",
+                    company_name="مخابز البوادي",
                     paper=paper
                 )
                 show_print_html(html, height=820)

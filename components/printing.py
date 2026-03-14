@@ -11,7 +11,7 @@ def _money(x):
 def _dt_short(x):
     return (x or "")[:19].replace("T", " ")
 
-def build_invoice_html(sale: dict, customer: dict = None, company_name="نظام المخبز", paper="80mm"):
+def build_invoice_html(sale: dict, customer: dict = None, company_name="مخابز البوادي", paper="80mm"):
     customer = customer or {}
     items = sale.get("items", []) or []
 
@@ -186,7 +186,7 @@ def build_invoice_html(sale: dict, customer: dict = None, company_name="نظام
 
     return html
 
-def build_receipt_html(sale: dict, customer: dict = None, company_name="نظام المخبز", paper="80mm"):
+def build_receipt_html(sale: dict, customer: dict = None, company_name="مخابز البوادي", paper="80mm"):
     """
     Receipt for cash payments (or partial):
     Shows: paid, net, extra_credit OR unpaid_debt.
@@ -280,7 +280,7 @@ def build_receipt_html(sale: dict, customer: dict = None, company_name="نظام
 """
     return html
 
-def build_debt_only_invoice_html(customer: dict, company_name="نظام المخبز", paper="80mm"):
+def build_debt_only_invoice_html(customer: dict, company_name="مخابز البوادي", paper="80mm"):
     """
     فاتورة ذمم فقط: تعتمد على customer.balance
     - إذا balance > 0 => ذمم مستحقة (على العميل)
@@ -394,7 +394,7 @@ def _calc_balance_delta_from_sale(s: dict) -> float:
         return (unpaid - extra)
     return 0.0
 
-def build_customer_statement_html(customer: dict, sales: list, company_name="نظام المخبز", paper="80mm", max_rows=30):
+def build_customer_statement_html(customer: dict, sales: list, company_name="مخابز البوادي", paper="80mm", max_rows=30):
     """
     كشف حساب مختصر:
     - الرصيد الحالي

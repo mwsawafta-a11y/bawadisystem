@@ -617,7 +617,7 @@ def orders_prep_page(go, user):
             if mode == "debt":
                 cid = st.session_state.get("last_print_customer_id") or ""
                 cust = doc_get("customers", cid) if cid else {}
-                html = build_debt_only_invoice_html(cust or {}, company_name="نظام المخبز", paper=paper)
+                html = build_debt_only_invoice_html(cust or {}, company_name="مخابز البوادي", paper=paper)
                 show_print_html(html, height=820)
                 return
 
@@ -625,7 +625,7 @@ def orders_prep_page(go, user):
                 cid = st.session_state.get("last_print_customer_id") or ""
                 cust = doc_get("customers", cid) if cid else {}
                 sales = _get_customer_sales_for_statement(cid, limit=200) if cid else []
-                html = build_customer_statement_html(cust or {}, sales, company_name="نظام المخبز", paper=paper, max_rows=30)
+                html = build_customer_statement_html(cust or {}, sales, company_name="مخابز البوادي", paper=paper, max_rows=30)
                 show_print_html(html, height=820)
                 return
             #--للتسديد
@@ -640,7 +640,7 @@ def orders_prep_page(go, user):
                     cust or {},
                     amount=amount,
                     remaining=remaining,
-                    company_name="نظام المخبز",
+                    company_name="مخابز البوادي",
                     paper=paper
                 )
 
@@ -655,10 +655,10 @@ def orders_prep_page(go, user):
             customer = (doc_get("customers", cust_id) or {}) if cust_id else {}
 
             if mode == "receipt":
-                html = build_receipt_html(sale, customer=customer or {}, company_name="نظام المخبز", paper=paper)
+                html = build_receipt_html(sale, customer=customer or {}, company_name="مخابز البوادي", paper=paper)
                 show_print_html(html, height=820)
             else:
-                html = build_invoice_html(sale, customer=customer or {}, company_name="نظام المخبز", paper=paper)
+                html = build_invoice_html(sale, customer=customer or {}, company_name="مخابز البوادي", paper=paper)
                 show_print_html(html, height=820)
 
         _dlg()

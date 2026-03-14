@@ -925,14 +925,14 @@ def orders_archive_page(go, user):
                 html = build_receipt_html(
                     sale,
                     customer=customer or {},
-                    company_name="نظام المخبز",
+                    company_name="مخابز البوادي",
                     paper=paper
                 )
             else:
                 html = build_invoice_html(
                     sale,
                     customer=customer or {},
-                    company_name="نظام المخبز",
+                    company_name="مخابز البوادي",
                     paper=paper
                 )
 

@@ -266,7 +266,7 @@ def _money(x):
     except Exception:
         return "0.000"
 
-def build_customer_full_statement_html(customer: dict, rows: list, final_balance: float, company_name="نظام المخبز", paper="80mm"):
+def build_customer_full_statement_html(customer: dict, rows: list, final_balance: float, company_name="مخابز البوادي", paper="80mm"):
     customer = customer or {}
     cust_name = customer.get("name") or customer.get("id") or "—"
     phone = customer.get("phone") or ""
@@ -1003,7 +1003,7 @@ def customers_page(go, user):
                     customer=customer,
                     rows=rows,
                     final_balance=final_balance,
-                    company_name="نظام المخبز",
+                    company_name="مخابز البوادي",
                     paper=paper
                 )
                 show_print_html(html, height=820)
