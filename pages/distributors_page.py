@@ -43,7 +43,7 @@ def _money3(x):
     try:
         return f"{float(x):.3f}"
     except Exception:
-        return "0.000"
+        return "0.00"
 
 
 # ---------------------------

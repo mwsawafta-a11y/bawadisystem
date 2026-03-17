@@ -264,7 +264,7 @@ def _money(x):
     try:
         return f"{float(x):.3f}"
     except Exception:
-        return "0.000"
+        return "0.00"
 
 def build_customer_full_statement_html(customer: dict, rows: list, final_balance: float, company_name="مخابز البوادي", paper="80mm"):
     customer = customer or {}

@@ -200,7 +200,7 @@ def orders_prep_page(go, user):
                 st.info("لا يوجد ذمم مستحقة على هذا العميل.")
                 if st.button("إغلاق", use_container_width=True, key=f"close_debt_payment_{cid}"):
                     st.session_state.active_dialog = None
-                    st.rerun()
+                  # st.rerun()
                 return
 
             st.warning(f"⚠️ الذمم الحالية على العميل: {cur_bal:.3f}")
@@ -321,7 +321,7 @@ def orders_prep_page(go, user):
                     st.session_state.pop(f"debt_payment_input_{cid}", None)
                     st.session_state.pop(f"debt_payment_discount_input_{cid}", None)
                     st.session_state.active_dialog = None
-                    st.rerun()
+                 #  st.rerun()
 
         _dlg()
      # ---------------------------
@@ -589,7 +589,7 @@ def orders_prep_page(go, user):
 
                     st.session_state.active_dialog = None
                     st.session_state.deliver_target_id = None
-                    st.rerun()
+                 #  st.rerun()
         _dlg()
        
     # ---------------------------
@@ -739,7 +739,7 @@ def orders_prep_page(go, user):
                 st.session_state.last_print_sale_id = None
                 st.session_state.last_debt_payment_amount = 0.0
                 st.session_state.active_dialog = "debt_payment"
-                st.rerun()
+                #st.rerun()
         with b3:
             if cur_balance > 0:
                 st.warning(f"⚠️ على العميل ذمم: {cur_balance:.2f}")
@@ -1175,7 +1175,7 @@ div[data-testid="stForm"] button:hover {
                         st.session_state.last_print_sale_id = None
                         st.session_state.last_print_customer_id = None
                         st.session_state.active_dialog = "deliver"
-                        st.rerun()
+                      # st.rerun()
                     else:
                         st.error("نسخة Streamlit لا تدعم Dialog. حدّث Streamlit أو اطلب مني نسخة بدون Dialog.")
 

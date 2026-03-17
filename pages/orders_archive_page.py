@@ -739,7 +739,7 @@ def orders_archive_page(go, user):
             cnt = 0
             sum_total = sum_discount = sum_net = sum_paid = sum_unpaid = sum_extra = 0.0
             cash_cnt = credit_cnt = 0
-
+            
             for d in sq.stream():
                 cnt += 1
                 sd = d.to_dict() or {}
