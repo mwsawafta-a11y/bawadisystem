@@ -9,9 +9,7 @@ from utils.helpers import now_iso, to_float, to_int
 from services.firestore_queries import col_to_list, doc_get
 
 from services.orders_service import write_stock_moves_batch, cancel_prepared_sale
-# ---------------------------
-#           Helpers
-# ---------------------------
+
 from components.printing import (
     build_invoice_html,
     build_receipt_html,
@@ -21,13 +19,11 @@ from components.printing import (
     show_print_html,
 )
 
- 
 
 def _supports_dialog():
     return hasattr(st, "dialog")
 
 
-    
 @st.cache_data(ttl=120)
 def get_distributor_name(dist_id: str) -> str:
     if not dist_id:
@@ -37,19 +33,120 @@ def get_distributor_name(dist_id: str) -> str:
         x = snap.to_dict() or {}
         return (x.get("name") or "").strip()
     return ""
+
+
 # ---------------------------
-# CACHED LOADERS (🔥 أسرع بكثير)
+# CACHED LOADERS
 # ---------------------------
 @st.cache_data(ttl=60)
 def load_products_cached():
     return col_to_list("products", where_active=True)
 
+
 @st.cache_data(ttl=60)
 def load_customers_cached():
     return col_to_list("customers", where_active=True)
 
+
+@st.cache_data(ttl=60)
+def _get_customer_prices_map_cached(customer_id: str, limit=400):
+    if not customer_id:
+        return {}
+
+    docs = (
+        db.collection("customer_prices")
+        .where("customer_id", "==", customer_id)
+        .limit(limit)
+        .stream()
+    )
+
+    out = {}
+    for d in docs:
+        x = d.to_dict() or {}
+        if x.get("active") is not True:
+            continue
+        pid = x.get("product_id")
+        if pid:
+            out[pid] = float(to_float(x.get("price", 0.0)))
+    return out
+
+
+@st.cache_data(ttl=30)
+def _get_customer_sales_for_statement(customer_id: str, limit=200):
+    if not customer_id:
+        return []
+
+    docs = (
+        db.collection("sales")
+        .where("customer_id", "==", customer_id)
+        .limit(int(limit))
+        .stream()
+    )
+
+    out = []
+    for d in docs:
+        x = d.to_dict() or {}
+        if x.get("active") is not True:
+            continue
+        x["id"] = d.id
+        out.append(x)
+
+    out.sort(
+        key=lambda x: (x.get("delivered_at") or x.get("updated_at") or x.get("created_at") or ""),
+        reverse=True
+    )
+    return out
+
+
+@st.cache_data(ttl=20)
+def _load_prepared_orders_for_customer_cached(customer_id: str):
+    if not customer_id:
+        return []
+
+    prepared_docs = (
+        db.collection("sales")
+        .where("active", "==", True)
+        .where("status", "==", "prepared")
+        .where("customer_id", "==", customer_id)
+        .order_by("created_at", direction=firestore.Query.DESCENDING)
+        .stream()
+    )
+
+    prepared = []
+    for d in prepared_docs:
+        x = d.to_dict() or {}
+        x["id"] = d.id
+        prepared.append(x)
+
+    return prepared
+
+
+@st.cache_data(ttl=20)
+def _load_done_orders_for_customer_cached(customer_id: str, limit=5):
+    if not customer_id:
+        return []
+
+    done_docs = (
+        db.collection("sales")
+        .where("active", "==", True)
+        .where("status", "==", "done")
+        .where("customer_id", "==", customer_id)
+        .order_by("delivered_at", direction=firestore.Query.DESCENDING)
+        .limit(int(limit))
+        .stream()
+    )
+
+    done = []
+    for d in done_docs:
+        x = d.to_dict() or {}
+        x["id"] = d.id
+        done.append(x)
+
+    return done
+
+
 # ---------------------------
-# UI helpers (Free qty + Card)
+# UI helpers
 # ---------------------------
 def _apply_free_qty(pid: str, stock_int: int):
     qty_key = f"free_qty__{pid}"
@@ -73,64 +170,29 @@ def _clear_prep_cart_and_free_qty_keys():
         if k.startswith("free_qty__") or k.startswith("show_free_qty__"):
             st.session_state.pop(k, None)
 
-# ---------------------------
-# Customer special prices (hidden)
-# ---------------------------
-@st.cache_data(ttl=60)
-def _get_customer_prices_map_cached(customer_id: str, limit=400):
-    """
-    Returns { product_id: price_float }
-    """
-    if not customer_id:
-        return {}
 
-    docs = (
-        db.collection("customer_prices")
-        .where("customer_id", "==", customer_id)
-        .limit(limit)
-        .stream()
-    )
-
-    out = {}
-    for d in docs:
-        x = d.to_dict() or {}
-
-        if x.get("active") is not True:
-            continue
-
-        pid = x.get("product_id")
-
-        if pid:
-            out[pid] = float(to_float(x.get("price", 0.0)))
-
-    return out
+def _clear_sales_related_caches():
+    load_products_cached.clear()
+    load_customers_cached.clear()
+    _get_customer_prices_map_cached.clear()
+    _get_customer_sales_for_statement.clear()
+    _load_prepared_orders_for_customer_cached.clear()
+    _load_done_orders_for_customer_cached.clear()
 
 
-@st.cache_data(ttl=30)
-def _get_customer_sales_for_statement(customer_id: str, limit=200):
-    """
-    يجلب آخر الحركات من sales للعميل (prepared/done) ثم نفرز محلياً
-    """
-    if not customer_id:
-        return []
-    docs = (
-        db.collection("sales")
-        .where("customer_id", "==", customer_id)
-        .limit(int(limit))
-        .stream()
-    )
-    out = []
-    for d in docs:
-        x = d.to_dict() or {}
-        if x.get("active") is not True:
-            continue
-        x["id"] = d.id
-        out.append(x)
-    out.sort(
-    key=lambda x: (x.get("delivered_at") or x.get("updated_at") or x.get("created_at") or ""),
-    reverse=True
-    )
-    return out
+def _acquire_action_lock(lock_name: str) -> bool:
+    key = f"_busy_{lock_name}"
+    if st.session_state.get(key, False):
+        st.warning("⏳ العملية قيد التنفيذ...")
+        return False
+    st.session_state[key] = True
+    return True
+
+
+def _release_action_lock(lock_name: str):
+    st.session_state[f"_busy_{lock_name}"] = False
+
+
 # ---------------------------
 # Main page
 # ---------------------------
@@ -139,13 +201,11 @@ def orders_prep_page(go, user):
     st.caption("✅ التحضير يخصم المخزون فوراً — الدفع يتحدد عند التسليم — الرصيد: موجب=عليه، سالب=له رصيد")
     st.divider()
 
-    # Back
     c_back, _, _ = st.columns([1, 2, 1])
     with c_back:
         if st.button("⬅️ رجوع", key="prep_back"):
             go("dashboard")
 
-    # Session states
     st.session_state.setdefault("prep_cart", {})
     st.session_state.setdefault("last_print_sale_id", None)
     st.session_state.setdefault("last_print_customer_id", None)
@@ -157,31 +217,33 @@ def orders_prep_page(go, user):
     st.session_state.setdefault("last_debt_payment_amount", 0.0)
     st.session_state.setdefault("last_debt_payment_remaining", 0.0)
     st.session_state.setdefault("last_debt_payment_discount", 0.0)
-    # ---------------------------------------------------------------
-    # Caches
-    #----------------------------------------------------------------
+
     r1, r2, _ = st.columns([1.2, 1.2, 1.6])
 
     with r1:
         if st.button("🔄 تحديث المنتجات", key="prep_refresh_products"):
             load_products_cached.clear()
+            _load_prepared_orders_for_customer_cached.clear()
+            _load_done_orders_for_customer_cached.clear()
             st.rerun()
 
     with r2:
         if st.button("🔄 تحديث العملاء", key="prep_refresh_customers"):
             load_customers_cached.clear()
             _get_customer_prices_map_cached.clear()
+            _load_prepared_orders_for_customer_cached.clear()
+            _load_done_orders_for_customer_cached.clear()
             st.rerun()
 
     products = load_products_cached()
     customers = load_customers_cached()
-    
+
     prod_by_id = {p["id"]: p for p in products}
     cust_by_id = {c["id"]: c for c in customers}
     cust_map = {c.get("name", c["id"]): c["id"] for c in customers}
 
     # ---------------------------
-    # Deliver dialog
+    # Debt payment dialog
     # ---------------------------
     def _render_debt_payment_dialog_if_needed():
         cid = st.session_state.get("last_print_customer_id")
@@ -240,14 +302,15 @@ def orders_prep_page(go, user):
 
             amount = float(to_float(raw_amount, 0.0))
             discount_amount = float(to_float(raw_discount, 0.0))
-
             total_effect = amount + discount_amount
-            
+
             st.caption(f"إجمالي التخفيض على الذمم = تسديد + خصم: {total_effect:.3f}")
             colA, colB = st.columns(2)
 
             with colA:
                 if st.button("✅ حفظ وطباعة السند", use_container_width=True, key=f"save_debt_payment_{cid}"):
+                    if not _acquire_action_lock(f"save_debt_payment_{cid}"):
+                        return
                     try:
                         if total_effect <= 0:
                             raise ValueError("أدخل مبلغ تسديد أو خصم أكبر من صفر")
@@ -293,9 +356,7 @@ def orders_prep_page(go, user):
                             "note": "تسديد ذمم من شاشة تحضير الطلبات"
                         })
 
-                        load_customers_cached.clear()
-                        _get_customer_prices_map_cached.clear()
-                        _get_customer_sales_for_statement.clear()
+                        _clear_sales_related_caches()
 
                         new_remaining = max(0.0, float(cur_bal) - float(total_effect))
                         st.session_state.last_debt_payment_amount = float(amount)
@@ -308,11 +369,13 @@ def orders_prep_page(go, user):
                         st.session_state.pop(disc_key, None)
                         st.session_state.pop(f"debt_payment_input_{cid}", None)
                         st.session_state.pop(f"debt_payment_discount_input_{cid}", None)
-                      
+
                         st.rerun()
 
                     except Exception as e:
                         st.error(f"فشل تسديد الذمم: {e}")
+                    finally:
+                        _release_action_lock(f"save_debt_payment_{cid}")
 
             with colB:
                 if st.button("❌ إغلاق", use_container_width=True, key=f"cancel_debt_payment_{cid}"):
@@ -324,7 +387,8 @@ def orders_prep_page(go, user):
                     st.rerun()
 
         _dlg()
-     # ---------------------------
+
+    # ---------------------------
     # Deliver dialog
     # ---------------------------
     def _render_deliver_dialog_if_needed():
@@ -342,14 +406,9 @@ def orders_prep_page(go, user):
 
         @st.dialog("✅ تسليم الطلب (تحديد الدفع) — ثم اطبع من قائمة المُسلّم")
         def _dlg():
-
             st.write(f"**فاتورة:** {sale.get('invoice_no') or sid}")
             st.write(f"**العميل:** {sale.get('customer_name') or '—'}")
             st.write(f"**الصافي:** {net_show:.2f}")
-
-            # =====================================================
-            # نوع الدفع
-            # =====================================================
 
             pay = st.radio(
                 "نوع الدفع عند التسليم",
@@ -358,17 +417,10 @@ def orders_prep_page(go, user):
                 index=0,
                 key="deliver_payment_pick",
             )
-            
-            # =====================================================
-            # 🔥 عرض الرصيد + زر إضافة الذمم (يعمل فقط عند الدفع نقدي)
-            # =====================================================
 
-            # ✅ حقل مستقل لتسديد الذمم السابقة
-            # old_debt_key = f"deliver_old_debt_paid_{sid}"
             old_debt_state_key = f"deliver_old_debt_paid_state_{sid}"
             old_debt_widget_key = f"deliver_old_debt_paid_input_{sid}"
 
-            # ✅ القيمة الداخلية تبدأ فارغة
             if old_debt_state_key not in st.session_state:
                 st.session_state[old_debt_state_key] = None
 
@@ -416,14 +468,9 @@ def orders_prep_page(go, user):
                 disabled=(cur_bal <= 0),
             )
 
-            # ✅ خزّن القيمة بعد القراءة
             st.session_state[old_debt_state_key] = old_debt_paid
             old_debt_paid = float(to_float(old_debt_paid, 0.0))
-      
-            # ضبط القيمة الافتراضية مرة واحدة فقط
-       
-            # مبلغ الفاتورة الحالية
-             # المبلغ المستلم = صافي الفاتورة
+
             paid_amount = float(net_show)
 
             st.number_input(
@@ -435,23 +482,19 @@ def orders_prep_page(go, user):
                 disabled=True
             )
 
-
             if pay != "cash":
                 st.info("الفاتورة الحالية ذمم — يمكنك فقط تسجيل تسديد ذمم سابقة من الحقل أعلاه.")
-            # =====================================================
-            # أزرار التحكم
-            # =====================================================
 
             colA, colB = st.columns(2)
 
             with colA:
-                if st.button("✅ تأكيد التسليم", use_container_width=True):
-
+                if st.button("✅ تأكيد التسليم", use_container_width=True, key=f"confirm_deliver_{sid}"):
+                    if not _acquire_action_lock(f"confirm_deliver_{sid}"):
+                        return
                     try:
-
                         @firestore.transactional
                         def tx_deliver(transaction):
-                            ts = now_iso()    
+                            ts = now_iso()
                             sale_ref = db.collection("sales").document(sid)
                             sale_snap = sale_ref.get(transaction=transaction)
                             if not sale_snap.exists:
@@ -494,7 +537,6 @@ def orders_prep_page(go, user):
                                 unpaid = max(0.0, net_local - paid)
 
                             invoice_effect = 0.0
-
                             if pay == "credit":
                                 invoice_effect = +net_local
                             else:
@@ -504,9 +546,9 @@ def orders_prep_page(go, user):
                                     invoice_effect -= extra
 
                             balance_delta = invoice_effect - old_debt_paid_local
-
                             old_debt_remaining_local = max(0.0, cur_bal_local - old_debt_paid_local)
                             final_due_local = max(0.0, cur_bal_local + balance_delta)
+
                             updates = {
                                 "status": "done",
                                 "payment_type": pay,
@@ -520,7 +562,7 @@ def orders_prep_page(go, user):
                                 "old_debt_remaining": float(old_debt_remaining_local),
                                 "final_due": float(final_due_local),
                                 "balance_applied": False,
-                                "distributor_id": (sd.get("distributor_id") or sd.get("seller_username") or user.get("username","")),
+                                "distributor_id": (sd.get("distributor_id") or sd.get("seller_username") or user.get("username", "")),
                                 "distributor_name": (
                                     sd.get("distributor_name")
                                     or get_distributor_name(
@@ -531,21 +573,20 @@ def orders_prep_page(go, user):
                                 ),
                             }
 
-                            if abs(balance_delta) > 1e-12:
+                            if abs(balance_delta) > 1e-12 and cust_ref is not None:
                                 new_bal = cur_bal_local + balance_delta
                                 transaction.update(cust_ref, {
-                                     "balance": new_bal,
-                                     "updated_at": ts
+                                    "balance": new_bal,
+                                    "updated_at": ts
                                 })
-
                                 updates["balance_applied"] = True
 
                             transaction.update(sale_ref, updates)
 
                         tx_deliver(db.transaction())
-                        load_customers_cached.clear()
-                        _get_customer_prices_map_cached.clear()
-                        _get_customer_sales_for_statement.clear()
+
+                        _clear_sales_related_caches()
+
                         old_paid_after = float(to_float(st.session_state.get(f"deliver_old_debt_paid_state_{sid}", 0.0), 0.0))
                         if old_paid_after > 0:
                             db.collection("customer_balance_moves").add({
@@ -560,19 +601,16 @@ def orders_prep_page(go, user):
                                 "created_by": user.get("username", ""),
                                 "note": "تسديد ذمم سابقة أثناء تسليم فاتورة"
                             })
-                        # 🔥 تنظيف Session State
+
                         st.session_state.pop(f"deliver_paid_amount_{sid}", None)
                         st.session_state.pop(f"deliver_old_debt_paid_state_{sid}", None)
                         st.session_state.pop(f"deliver_old_debt_paid_input_{sid}", None)
- 
+
                         st.success("تم التسليم ✅")
 
                         st.session_state.last_print_sale_id = sid
                         st.session_state.last_print_customer_id = None
-
-                        # 🔥 دائماً فاتورة (وليس سند قبض)
                         st.session_state._print_mode = "invoice"
-
                         st.session_state.active_dialog = "print"
                         st.session_state.deliver_target_id = None
 
@@ -580,17 +618,20 @@ def orders_prep_page(go, user):
 
                     except Exception as e:
                         st.error(f"فشل التسليم: {e}")
+                    finally:
+                        _release_action_lock(f"confirm_deliver_{sid}")
 
             with colB:
-                if st.button("❌ إغلاق", use_container_width=True):
+                if st.button("❌ إغلاق", use_container_width=True, key=f"close_deliver_{sid}"):
                     st.session_state.pop(f"deliver_paid_amount_{sid}", None)
                     st.session_state.pop(f"deliver_old_debt_paid_state_{sid}", None)
                     st.session_state.pop(f"deliver_old_debt_paid_input_{sid}", None)
                     st.session_state.active_dialog = None
                     st.session_state.deliver_target_id = None
                     st.rerun()
+
         _dlg()
-       
+
     # ---------------------------
     # Print dialog
     # ---------------------------
@@ -600,12 +641,13 @@ def orders_prep_page(go, user):
 
         mode = st.session_state.get("_print_mode", "invoice")
 
-
         @st.dialog("🖨️ طباعة")
         def _dlg():
             col1, col2 = st.columns([1, 1])
+
             with col1:
                 paper = st.selectbox("نوع الورق", ["80mm", "a4"], index=0, key="print_paper_pick")
+
             with col2:
                 if st.button("❌ إغلاق", use_container_width=True, key="print_close"):
                     st.session_state.active_dialog = None
@@ -627,7 +669,7 @@ def orders_prep_page(go, user):
                 html = build_customer_statement_html(cust or {}, sales, company_name="مخابز البوادي", paper=paper, max_rows=30)
                 show_print_html(html, height=820)
                 return
-            #--للتسديد
+
             if mode == "debt_payment_only":
                 cid = st.session_state.get("last_print_customer_id") or ""
                 cust = doc_get("customers", cid) if cid else {}
@@ -642,10 +684,9 @@ def orders_prep_page(go, user):
                     company_name="مخابز البوادي",
                     paper=paper
                 )
-
                 show_print_html(html, height=820)
                 return
-            
+
             sid = st.session_state.get("last_print_sale_id") or ""
             sale = (doc_get("sales", sid) or {}) if sid else {}
             sale["id"] = sid
@@ -655,14 +696,13 @@ def orders_prep_page(go, user):
 
             if mode == "receipt":
                 html = build_receipt_html(sale, customer=customer or {}, company_name="مخابز البوادي", paper=paper)
-                show_print_html(html, height=820)
             else:
                 html = build_invoice_html(sale, customer=customer or {}, company_name="مخابز البوادي", paper=paper)
-                show_print_html(html, height=820)
+
+            show_print_html(html, height=820)
 
         _dlg()
 
-    # ✅ Router: open ONLY ONE dialog per run
     if _supports_dialog():
         if st.session_state.get("active_dialog") == "deliver":
             _render_deliver_dialog_if_needed()
@@ -671,9 +711,6 @@ def orders_prep_page(go, user):
         elif st.session_state.get("active_dialog") == "print":
             _render_print_dialog_if_needed()
 
-    # ---------------------------
-    # New preparation
-    # ---------------------------
     st.subheader("➕ تحضير طلب جديد (خصم مخزون فوراً)")
 
     if not customers:
@@ -718,7 +755,7 @@ def orders_prep_page(go, user):
             key="prep_discount"
         )
         discount = float(to_float(discount, 0.0))
-        
+
     if prep_kind == "عميل" and not cust_name:
         st.info("اختر عميل لبدء التحضير.")
         return
@@ -726,12 +763,12 @@ def orders_prep_page(go, user):
     if prep_kind == "عميل":
         customer_id = cust_map[cust_name]
         customer = cust_by_id.get(customer_id, {}) or {}
-
         cur_balance = float(to_float(customer.get("balance", 0)))
 
         b1, b2, b3 = st.columns([1.2, 1.1, 2.7])
         with b1:
             st.metric("رصيد العميل", f"{cur_balance:.2f}")
+
         with b2:
             if st.button("💰 تسديد", use_container_width=True, key="cust_statement_print_btn", disabled=(cur_balance <= 0)):
                 st.session_state.last_print_customer_id = customer_id
@@ -739,6 +776,7 @@ def orders_prep_page(go, user):
                 st.session_state.last_debt_payment_amount = 0.0
                 st.session_state.active_dialog = "debt_payment"
                 st.rerun()
+
         with b3:
             if cur_balance > 0:
                 st.warning(f"⚠️ على العميل ذمم: {cur_balance:.2f}")
@@ -760,6 +798,7 @@ def orders_prep_page(go, user):
         st.info("✅ وضع الزائر: لا يتم استخدام اسم عميل ولا رصيد ولا أسعار خاصة.")
 
     st.divider()
+
     st.markdown("""
 <style>
 div[data-testid="stForm"] button {
@@ -768,7 +807,6 @@ div[data-testid="stForm"] button {
     border: 1px solid #22c55e !important;
     font-weight: 700 !important;
 }
-
 div[data-testid="stForm"] button:hover {
     background-color: #16a34a !important;
     border-color: #15803d !important;
@@ -776,8 +814,8 @@ div[data-testid="stForm"] button:hover {
 }
 </style>
 """, unsafe_allow_html=True)
+
     with st.form("prep_products_form", clear_on_submit=False):
-        # ✅ مثل صفحة الموزعين: اختيار الأصناف على شكل tags
         default_names = []
         for pid in list((st.session_state.prep_cart or {}).keys()):
             if pid in prod_by_id:
@@ -796,23 +834,19 @@ div[data-testid="stForm"] button:hover {
 
         name_to_id = {p["name"]: p["id"] for p in all_products}
 
-         
         for nm in chosen:
             pid = name_to_id[nm]
             prod = prod_by_id.get(pid, {}) or {}
             stock_int = int(to_int(to_float(prod.get("qty_on_hand", 0)), 0))
             qty_in_cart = int(st.session_state.prep_cart.get(pid, 0))
-
             qty_key = f"free_qty__{pid}"
 
             if qty_key not in st.session_state:
                 st.session_state[qty_key] = (qty_in_cart if qty_in_cart > 0 else None)
 
             cols = st.columns([3.8, 1.0], gap="small")
-
             with cols[0]:
                 st.markdown(f"<div style='margin-bottom:-8px;'><b>{nm}</b></div>", unsafe_allow_html=True)
-
             with cols[1]:
                 st.number_input(
                     f"qty_{pid}",
@@ -832,12 +866,10 @@ div[data-testid="stForm"] button:hover {
     if submitted:
         chosen_ids = {name_to_id[nm] for nm in chosen} if chosen else set()
 
-        # حذف الأصناف التي أزيلت من الاختيار
         for pid in list((st.session_state.prep_cart or {}).keys()):
             if pid not in chosen_ids:
                 st.session_state.prep_cart.pop(pid, None)
 
-        # تطبيق الكميات المختارة على السلة
         for nm in chosen:
             pid = name_to_id[nm]
             prod = prod_by_id.get(pid, {}) or {}
@@ -845,9 +877,10 @@ div[data-testid="stForm"] button:hover {
             _apply_free_qty(pid, stock_int)
 
         st.rerun()
-   
+
     st.markdown("### 🧺 السلة")
     cart = st.session_state.prep_cart or {}
+
     if not cart:
         st.info("السلة فارغة.")
     else:
@@ -893,6 +926,9 @@ div[data-testid="stForm"] button:hover {
         if user.get("role") == "admin":
             with colA:
                 if st.button("💾 حفظ كطلب مُحضّر (خصم مخزون الآن)", use_container_width=True, key="prep_save"):
+                    if not _acquire_action_lock("prep_save"):
+                        return
+
                     inv = f"INV-{datetime.now(timezone(timedelta(hours=3))).strftime('%Y%m%d-%H%M%S-%f')}"
                     sale_id = inv.lower().replace(":", "").replace(" ", "_")
 
@@ -906,7 +942,7 @@ div[data-testid="stForm"] button:hover {
                             ref = db.collection("products").document(it["product_id"])
                             snap = ref.get(transaction=transaction)
                             if not snap.exists:
-                                raise ValueError(f"منتج غير موجود: {it.get('product_name','')}")
+                                raise ValueError(f"منتج غير موجود: {it.get('product_name', '')}")
                             prod_refs.append(ref)
                             snaps.append(snap)
 
@@ -921,7 +957,6 @@ div[data-testid="stForm"] button:hover {
                         for it, ref, snap in zip(items, prod_refs, snaps):
                             cur = float(to_float((snap.to_dict() or {}).get("qty_on_hand", 0)))
                             req = float(it["qty"])
-
                             transaction.update(ref, {"qty_on_hand": cur - req, "updated_at": ts})
 
                         sale_ref = db.collection("sales").document(sale_id)
@@ -952,9 +987,7 @@ div[data-testid="stForm"] button:hover {
 
                     try:
                         tx_prepare_and_deduct(db.transaction())
-                        load_products_cached.clear()
-                        _get_customer_sales_for_statement.clear()
-                                                  
+
                         moves = []
                         for it in items:
                             moves.append({
@@ -972,47 +1005,52 @@ div[data-testid="stForm"] button:hover {
 
                         write_stock_moves_batch(moves)
 
+                        _clear_sales_related_caches()
                         _clear_prep_cart_and_free_qty_keys()
                         st.success("تم حفظ الطلب كمُحضّر ✅ وتم خصم المخزون ✅")
                         st.rerun()
+
                     except Exception as e:
                         st.error(f"فشل التحضير/الخصم: {e}")
-#--style button ---red color ------------------------------------------------------------------------------                        
+                    finally:
+                        _release_action_lock("prep_save")
+
         components.html("""
         <script>
         function colorDirectDeliverButton() {
-        const buttons = window.parent.document.querySelectorAll('button');
-        buttons.forEach(btn => {
+          const buttons = window.parent.document.querySelectorAll('button');
+          buttons.forEach(btn => {
             const txt = (btn.innerText || "").trim();
             if (txt.includes("🚚 تسليم مباشر")) {
-            btn.style.backgroundColor = "#ef4444";
-            btn.style.color = "white";
-            btn.style.border = "1px solid #ef4444";
-            btn.style.fontWeight = "700";
-
-            btn.onmouseenter = () => {
+              btn.style.backgroundColor = "#ef4444";
+              btn.style.color = "white";
+              btn.style.border = "1px solid #ef4444";
+              btn.style.fontWeight = "700";
+              btn.onmouseenter = () => {
                 btn.style.backgroundColor = "#dc2626";
                 btn.style.border = "1px solid #dc2626";
-            };
-            btn.onmouseleave = () => {
+              };
+              btn.onmouseleave = () => {
                 btn.style.backgroundColor = "#ef4444";
                 btn.style.border = "1px solid #ef4444";
-            };
+              };
             }
-        });
+          });
         }
-
         colorDirectDeliverButton();
         setTimeout(colorDirectDeliverButton, 300);
         setTimeout(colorDirectDeliverButton, 1000);
         </script>
         """, height=0, width=0)
-#--style button ---------------------------------------------------------------------------------  
+
         with colB:
             if st.button("🚚 تسليم مباشر (خصم + تسليم الآن)", use_container_width=True, key="prep_direct_deliver"):
                 if user.get("role") == "distributor" and prep_kind == "زائر":
                     st.error("لا يمكن للموزع إنشاء طلب زائر")
                     st.stop()
+
+                if not _acquire_action_lock("prep_direct_deliver"):
+                    return
 
                 inv = f"INV-{datetime.now(timezone(timedelta(hours=3))).strftime('%Y%m%d-%H%M%S-%f')}"
                 sale_id = inv.lower().replace(":", "").replace(" ", "_")
@@ -1029,7 +1067,7 @@ div[data-testid="stForm"] button:hover {
                             ref = db.collection("products").document(it["product_id"])
                             snap = ref.get(transaction=transaction)
                             if not snap.exists:
-                                raise ValueError(f"منتج غير موجود: {it.get('product_name','')}")
+                                raise ValueError(f"منتج غير موجود: {it.get('product_name', '')}")
                             prod_refs.append(ref)
                             snaps.append(snap)
 
@@ -1045,9 +1083,8 @@ div[data-testid="stForm"] button:hover {
                             cur = float(to_float((snap.to_dict() or {}).get("qty_on_hand", 0)))
                             req = float(it["qty"])
                             transaction.update(ref, {"qty_on_hand": cur - req, "updated_at": ts})
-                        
-                        sale_ref = db.collection("sales").document(sale_id)
 
+                        sale_ref = db.collection("sales").document(sale_id)
                         transaction.set(sale_ref, {
                             "invoice_no": inv,
                             "ref": inv,
@@ -1074,8 +1111,7 @@ div[data-testid="stForm"] button:hover {
                         }, merge=True)
 
                     tx_direct_deliver(db.transaction())
-                    load_products_cached.clear()
-                    _get_customer_sales_for_statement.clear()
+
                     moves = []
                     for it in items:
                         moves.append({
@@ -1092,64 +1128,34 @@ div[data-testid="stForm"] button:hover {
                         })
 
                     write_stock_moves_batch(moves)
+
+                    _clear_sales_related_caches()
                     _clear_prep_cart_and_free_qty_keys()
                     st.session_state.deliver_target_id = sale_id
                     st.session_state.active_dialog = "deliver"
                     st.rerun()
 
-
                 except Exception as e:
                     st.error(f"فشل التسليم المباشر: {e}")
+                finally:
+                    _release_action_lock("prep_direct_deliver")
 
         with colC:
             if st.button("🧹 تفريغ السلة", use_container_width=True, key="prep_clear"):
                 _clear_prep_cart_and_free_qty_keys()
                 st.rerun()
 
-# Lists: Prepared + Done (FAST per selected customer)
     st.divider()
     st.subheader("📦 طلبات مُحضّرة جاهزة للتسليم")
 
-    # ✅ إذا لم يتم اختيار عميل (أو زائر)، اعرض نفس السلوك القديم أو اعرض رسالة
     if prep_kind != "عميل" or not customer_id:
         st.info("اختر عميل لعرض طلباته المُحضّرة وآخر 5 فواتير مُسلّمة له.")
         prepared = []
         done = []
     else:
-        # 1) كل الطلبات المُحضّرة لهذا العميل (بدون limit عادة)
-        prepared_docs = (
-            db.collection("sales")
-            .where("active", "==", True)
-            .where("status", "==", "prepared")
-            .where("customer_id", "==", customer_id)
-            .order_by("created_at", direction=firestore.Query.DESCENDING)
-            .stream()
-        )
+        prepared = _load_prepared_orders_for_customer_cached(customer_id)
+        done = _load_done_orders_for_customer_cached(customer_id, limit=5)
 
-        prepared = []
-        for d in prepared_docs:
-            x = d.to_dict() or {}
-            x["id"] = d.id
-            prepared.append(x)
-
-        # 2) آخر 5 فواتير مُسلّمة لهذا العميل فقط
-        done_docs = (
-            db.collection("sales")
-            .where("active", "==", True)
-            .where("status", "==", "done")
-            .where("customer_id", "==", customer_id)
-            .order_by("delivered_at", direction=firestore.Query.DESCENDING)
-            .limit(5)
-            .stream()
-        )
-
-        done = []
-        for d in done_docs:
-            x = d.to_dict() or {}
-            x["id"] = d.id
-            done.append(x)
-
-    # (اختياري) لا تحتاج sort لأن order_by موجود، لكن تركه لا يضر:
     prepared.sort(key=lambda x: (x.get("created_at") or ""), reverse=True)
     done.sort(key=lambda x: (x.get("delivered_at") or x.get("updated_at") or ""), reverse=True)
 
@@ -1180,15 +1186,19 @@ div[data-testid="stForm"] button:hover {
 
             with row3:
                 if st.button("❌ إلغاء الطلب", use_container_width=True, key=f"cancel_prepared_{sid}"):
+                    if not _acquire_action_lock(f"cancel_prepared_{sid}"):
+                        return
                     try:
                         cancel_prepared_sale(sid, user)
+                        _clear_sales_related_caches()
                         st.success("تم إلغاء الطلب وإرجاع المخزون ✅")
                         st.rerun()
                     except Exception as e:
                         st.error(f"فشل إلغاء الطلب: {e}")
+                    finally:
+                        _release_action_lock(f"cancel_prepared_{sid}")
 
             st.divider()
-
 
     st.divider()
     st.subheader("✅ فواتير مُسلّمة (اطبع من هنا)")
@@ -1224,6 +1234,7 @@ div[data-testid="stForm"] button:hover {
         old_debt_paid = float(to_float(o.get("old_debt_paid", 0)))
 
         left, b1, b2 = st.columns([4.2, 0.9, 0.9])
+
         with left:
             pay_txt = "ذمم" if ptype == "credit" else ("نقدي" if ptype == "cash" else "غير محدد")
             st.markdown(f"**{inv}** — {cname} | الصافي: **{net_v:.2f}** | الدفع: **{pay_txt}**")

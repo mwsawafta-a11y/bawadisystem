@@ -2,7 +2,24 @@ from firebase_config import db
 from firebase_admin import firestore
 
 from utils.helpers import now_iso, to_float
-from services.firestore_queries import doc_get
+
+
+def _safe_str(x):
+    return str(x or "").strip()
+
+
+def _stock_move_doc_id(move: dict, idx: int) -> str:
+    """
+    معرّف ثابت لمنع تكرار تسجيل نفس حركة المخزون إذا تكرر التنفيذ.
+    """
+    return "sm__{ref_type}__{ref_id}__{item_type}__{item_id}__{move_type}__{idx}".format(
+        ref_type=_safe_str(move.get("ref_type")),
+        ref_id=_safe_str(move.get("ref_id")),
+        item_type=_safe_str(move.get("item_type")),
+        item_id=_safe_str(move.get("item_id")),
+        move_type=_safe_str(move.get("type")),
+        idx=int(idx),
+    )
 
 
 def write_stock_moves_batch(moves: list[dict]):
@@ -12,18 +29,24 @@ def write_stock_moves_batch(moves: list[dict]):
     batch = db.batch()
     ts = now_iso()
 
-    for move in moves:
-        move["created_at"] = ts
-        move["active"] = True
-        ref = db.collection("stock_moves").document()
-        batch.set(ref, move)
+    for idx, move in enumerate(moves):
+        payload = dict(move or {})
+        payload["created_at"] = payload.get("created_at") or ts
+        payload["active"] = True
+
+        ref = db.collection("stock_moves").document(_stock_move_doc_id(payload, idx))
+        batch.set(ref, payload, merge=True)
 
     batch.commit()
 
 
 def cancel_prepared_sale(sid: str, user: dict):
+    sale_items_for_moves = []
+
     @firestore.transactional
     def tx_cancel(transaction):
+        nonlocal sale_items_for_moves
+
         ts = now_iso()
 
         sale_ref = db.collection("sales").document(sid)
@@ -37,10 +60,18 @@ def cancel_prepared_sale(sid: str, user: dict):
         if sale.get("active") is not True:
             raise ValueError("الفاتورة غير فعالة")
 
-        if sale.get("status") != "prepared":
+        current_status = sale.get("status")
+
+        # حماية من التكرار
+        if current_status == "cancelled":
+            sale_items_for_moves = sale.get("items", []) or []
+            return
+
+        if current_status != "prepared":
             raise ValueError("لا يمكن إلغاء إلا الطلبات المحضّرة فقط")
 
         items = sale.get("items", []) or []
+        sale_items_for_moves = items
 
         prod_rows = []
 
@@ -83,19 +114,23 @@ def cancel_prepared_sale(sid: str, user: dict):
 
     tx_cancel(db.transaction())
 
-    sale = doc_get("sales", sid) or {}
-
     moves = []
 
-    for it in (sale.get("items", []) or []):
+    for it in (sale_items_for_moves or []):
+        qty = float(to_float(it.get("qty", 0)))
+        pid = it.get("product_id", "")
+
+        if not pid or qty <= 0:
+            continue
+
         moves.append({
             "type": "sale_cancel",
             "ref_type": "sale_cancelled",
             "ref_id": sid,
             "item_type": "product",
-            "item_id": it.get("product_id", ""),
+            "item_id": pid,
             "item_name": it.get("product_name", ""),
-            "qty_delta": float(to_float(it.get("qty", 0))),
+            "qty_delta": qty,
             "unit": (it.get("unit") or "pcs"),
             "note": "إرجاع مخزون بسبب إلغاء طلب محضّر قبل التسليم",
             "created_by": user.get("username", ""),
