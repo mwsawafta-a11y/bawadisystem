@@ -146,7 +146,7 @@ def _load_done_orders_for_customer_cached(customer_id: str, limit=3):
 
 
 # ---------------------------
-# SESSION LOADERS (once per session until manual clear)
+# SESSION LOADERS
 # ---------------------------
 def _get_products_once():
     if "orders_products_once" not in st.session_state:
@@ -161,22 +161,110 @@ def _get_customers_once():
 
 
 # ---------------------------
+# Cart helpers
+# ---------------------------
+def _normalize_prep_cart():
+    cart = st.session_state.get("prep_cart", {}) or {}
+    out = {}
+    changed = False
+
+    for pid, val in cart.items():
+        if isinstance(val, dict):
+            out[pid] = {
+                "qty": int(to_int(val.get("qty", 0), 0)),
+                "price": float(to_float(val.get("price", 0.0), 0.0)),
+                "product_name": val.get("product_name", ""),
+                "consume_stock": bool(val.get("consume_stock", True)),
+            }
+        else:
+            out[pid] = {
+                "qty": int(to_int(val, 0)),
+                "price": 0.0,
+                "product_name": "",
+                "consume_stock": True,
+            }
+            changed = True
+
+    if changed or cart != out:
+        st.session_state.prep_cart = out
+
+    return st.session_state.prep_cart
+
+
+def _cart_get_item(pid: str) -> dict:
+    cart = _normalize_prep_cart()
+    return cart.get(pid, {}) or {}
+
+
+def _cart_get_qty(pid: str) -> int:
+    row = _cart_get_item(pid)
+    return int(to_int(row.get("qty", 0), 0))
+
+
+def _cart_set_item(pid: str, qty: int, price: float, product_name: str, consume_stock: bool):
+    _normalize_prep_cart()
+    if qty <= 0:
+        st.session_state.prep_cart.pop(pid, None)
+        return
+
+    st.session_state.prep_cart[pid] = {
+        "qty": int(to_int(qty, 0)),
+        "price": float(to_float(price, 0.0)),
+        "product_name": product_name or "",
+        "consume_stock": bool(consume_stock),
+    }
+
+
+def _cart_reprice_if_needed(pid: str, prod: dict, cust_price_map: dict, prep_kind: str):
+    row = _cart_get_item(pid)
+    if not row:
+        return
+
+    if float(to_float(row.get("price", 0.0), 0.0)) > 0:
+        return
+
+    base_price = float(to_float((prod or {}).get("price", 0), 0.0))
+    used_price = float(to_float(cust_price_map.get(pid, base_price), base_price)) if prep_kind == "عميل" else base_price
+
+    _cart_set_item(
+        pid=pid,
+        qty=int(to_int(row.get("qty", 0), 0)),
+        price=used_price,
+        product_name=row.get("product_name") or (prod or {}).get("name", pid),
+        consume_stock=bool(row.get("consume_stock", (prod or {}).get("consume_stock", True))),
+    )
+
+
+# ---------------------------
 # UI helpers
 # ---------------------------
-def _apply_free_qty(pid: str, stock_int: int):
+def _apply_free_qty(pid: str, stock_int: int, prod_by_id: dict, cust_price_map: dict, prep_kind: str):
     qty_key = f"free_qty__{pid}"
     raw = st.session_state.get(qty_key, None)
     q = int(to_int(raw, 0))
 
+    prod = prod_by_id.get(pid, {}) or {}
+    consume_stock = bool(prod.get("consume_stock", True))
+
     if q < 0:
         q = 0
-    if q > int(stock_int):
+
+    if consume_stock and q > int(stock_int):
         q = int(stock_int)
+
+    base_price = float(to_float(prod.get("price", 0), 0.0))
+    used_price = float(to_float(cust_price_map.get(pid, base_price), base_price)) if prep_kind == "عميل" else base_price
 
     if q == 0:
         st.session_state.prep_cart.pop(pid, None)
     else:
-        st.session_state.prep_cart[pid] = q
+        _cart_set_item(
+            pid=pid,
+            qty=q,
+            price=used_price,
+            product_name=prod.get("name", pid),
+            consume_stock=consume_stock,
+        )
 
 
 def _clear_prep_cart_and_free_qty_keys():
@@ -238,6 +326,8 @@ def orders_prep_page(go, user):
     st.session_state.setdefault("last_debt_payment_amount", 0.0)
     st.session_state.setdefault("last_debt_payment_remaining", 0.0)
     st.session_state.setdefault("last_debt_payment_discount", 0.0)
+
+    _normalize_prep_cart()
 
     r1, r2, _ = st.columns([1.2, 1.2, 1.6])
 
@@ -838,30 +928,55 @@ div[data-testid="stForm"] button:hover {
 </style>
 """, unsafe_allow_html=True)
 
+    def _sync_cart_when_multiselect_changes(name_to_id_map: dict):
+        chosen_names = st.session_state.get("prep_load_choose", []) or []
+        chosen_ids = {
+            name_to_id_map[nm]
+            for nm in chosen_names
+            if nm in name_to_id_map
+        }
+
+        for pid in list((_normalize_prep_cart() or {}).keys()):
+            if pid not in chosen_ids:
+                st.session_state.prep_cart.pop(pid, None)
+                st.session_state.pop(f"free_qty__{pid}", None)
+                st.session_state.pop(f"show_free_qty__{pid}", None)
+
+    default_names = []
+    for pid in list((_normalize_prep_cart() or {}).keys()):
+        if pid in prod_by_id:
+            default_names.append(prod_by_id[pid].get("name", pid))
+
+    all_products = [{"id": p["id"], "name": p.get("name", p["id"])} for p in products]
+    all_products.sort(key=lambda r: (r["name"] or ""))
+
+    product_name_options = [p["name"] for p in all_products]
+    name_to_id = {p["name"]: p["id"] for p in all_products}
+
+    if "prep_load_choose" not in st.session_state:
+        st.session_state["prep_load_choose"] = [nm for nm in default_names if nm in product_name_options][:20]
+    else:
+        st.session_state["prep_load_choose"] = [
+            nm for nm in (st.session_state.get("prep_load_choose", []) or [])
+            if nm in product_name_options
+        ]
+
+    chosen = st.multiselect(
+        "اختر الأصناف",
+        options=product_name_options,
+        key="prep_load_choose",
+        placeholder="اختر الأصناف من هنا",
+        on_change=_sync_cart_when_multiselect_changes,
+        args=(name_to_id,),
+    )
+
     with st.form("prep_products_form", clear_on_submit=False):
-        default_names = []
-        for pid in list((st.session_state.prep_cart or {}).keys()):
-            if pid in prod_by_id:
-                default_names.append(prod_by_id[pid].get("name", pid))
-
-        all_products = [{"id": p["id"], "name": p.get("name", p["id"])} for p in products]
-        all_products.sort(key=lambda r: (r["name"] or ""))
-
-        chosen = st.multiselect(
-            "اختر الأصناف",
-            options=[p["name"] for p in all_products],
-            default=default_names[:20],
-            key="prep_load_choose",
-            placeholder="اختر الأصناف من هنا"
-        )
-
-        name_to_id = {p["name"]: p["id"] for p in all_products}
-
         for nm in chosen:
             pid = name_to_id[nm]
             prod = prod_by_id.get(pid, {}) or {}
+            consume_stock = bool(prod.get("consume_stock", True))
             stock_int = int(to_int(to_float(prod.get("qty_on_hand", 0)), 0))
-            qty_in_cart = int(st.session_state.prep_cart.get(pid, 0))
+            qty_in_cart = _cart_get_qty(pid)
             qty_key = f"free_qty__{pid}"
 
             if qty_key not in st.session_state:
@@ -869,17 +984,20 @@ div[data-testid="stForm"] button:hover {
 
             cols = st.columns([3.8, 1.0], gap="small")
             with cols[0]:
-                st.markdown(f"<div style='margin-bottom:-8px;'><b>{nm}</b></div>", unsafe_allow_html=True)
+                extra = " <span style='color:#0ea5e9;'>(لا يستهلك)</span>" if not consume_stock else ""
+                st.markdown(f"<div style='margin-bottom:-8px;'><b>{nm}</b>{extra}</div>", unsafe_allow_html=True)
             with cols[1]:
-                st.number_input(
-                    f"qty_{pid}",
+                kwargs = dict(
                     min_value=0,
-                    max_value=max(0, stock_int),
                     step=1,
                     key=qty_key,
                     label_visibility="collapsed",
                     placeholder="الكمية",
                 )
+                if consume_stock:
+                    st.number_input(f"qty_{pid}", max_value=max(0, stock_int), **kwargs)
+                else:
+                    st.number_input(f"qty_{pid}", **kwargs)
 
         submitted = st.form_submit_button(
             "✅ إضافة الأصناف المحددة للسلة",
@@ -889,7 +1007,7 @@ div[data-testid="stForm"] button:hover {
     if submitted:
         chosen_ids = {name_to_id[nm] for nm in chosen} if chosen else set()
 
-        for pid in list((st.session_state.prep_cart or {}).keys()):
+        for pid in list((_normalize_prep_cart() or {}).keys()):
             if pid not in chosen_ids:
                 st.session_state.prep_cart.pop(pid, None)
 
@@ -897,12 +1015,12 @@ div[data-testid="stForm"] button:hover {
             pid = name_to_id[nm]
             prod = prod_by_id.get(pid, {}) or {}
             stock_int = int(to_int(to_float(prod.get("qty_on_hand", 0)), 0))
-            _apply_free_qty(pid, stock_int)
+            _apply_free_qty(pid, stock_int, prod_by_id, cust_price_map, prep_kind)
 
         st.rerun()
 
     st.markdown("### 🧺 السلة")
-    cart = st.session_state.prep_cart or {}
+    cart = _normalize_prep_cart() or {}
 
     if not cart:
         st.info("السلة فارغة.")
@@ -910,12 +1028,18 @@ div[data-testid="stForm"] button:hover {
         items = []
         total = 0.0
 
-        for pid, qty in cart.items():
+        for pid, row in cart.items():
             pr = prod_by_id.get(pid, {}) or {}
-            pname = pr.get("name", pid)
+            qty = int(to_int((row or {}).get("qty", 0), 0))
+            if qty <= 0:
+                continue
 
-            base_price = float(to_float(pr.get("price", 0)))
-            used_price = float(cust_price_map.get(pid, base_price))
+            _cart_reprice_if_needed(pid, pr, cust_price_map, prep_kind)
+            row = _cart_get_item(pid)
+
+            pname = row.get("product_name") or pr.get("name", pid)
+            used_price = float(to_float(row.get("price", 0.0), 0.0))
+            consume_stock = bool(row.get("consume_stock", pr.get("consume_stock", True)))
 
             line_total = float(used_price) * float(qty)
             total += line_total
@@ -926,6 +1050,7 @@ div[data-testid="stForm"] button:hover {
                 "qty": int(qty),
                 "price": float(used_price),
                 "total": float(line_total),
+                "consume_stock": consume_stock,
             })
 
         net = float(total) - float(discount)
@@ -958,18 +1083,22 @@ div[data-testid="stForm"] button:hover {
                     @firestore.transactional
                     def tx_prepare_and_deduct(transaction):
                         ts = now_iso()
+                        tx_items = []
 
-                        prod_refs = []
-                        snaps = []
                         for it in items:
+                            if not bool(it.get("consume_stock", True)):
+                                tx_items.append((it, None, None))
+                                continue
+
                             ref = db.collection("products").document(it["product_id"])
                             snap = ref.get(transaction=transaction)
                             if not snap.exists:
                                 raise ValueError(f"منتج غير موجود: {it.get('product_name', '')}")
-                            prod_refs.append(ref)
-                            snaps.append(snap)
+                            tx_items.append((it, ref, snap))
 
-                        for it, snap in zip(items, snaps):
+                        for it, ref, snap in tx_items:
+                            if not bool(it.get("consume_stock", True)):
+                                continue
                             cur = float(to_float((snap.to_dict() or {}).get("qty_on_hand", 0)))
                             req = float(it["qty"])
                             if cur < req:
@@ -977,7 +1106,9 @@ div[data-testid="stForm"] button:hover {
                                     f"المخزون غير كافي للمنتج: {it['product_name']} (المطلوب {req}, المتوفر {cur})"
                                 )
 
-                        for it, ref, snap in zip(items, prod_refs, snaps):
+                        for it, ref, snap in tx_items:
+                            if not bool(it.get("consume_stock", True)):
+                                continue
                             cur = float(to_float((snap.to_dict() or {}).get("qty_on_hand", 0)))
                             req = float(it["qty"])
                             transaction.update(ref, {"qty_on_hand": cur - req, "updated_at": ts})
@@ -1013,6 +1144,8 @@ div[data-testid="stForm"] button:hover {
 
                         moves = []
                         for it in items:
+                            if not bool(it.get("consume_stock", True)):
+                                continue
                             moves.append({
                                 "type": "sale",
                                 "ref_type": "sale_prepared",
@@ -1026,7 +1159,8 @@ div[data-testid="stForm"] button:hover {
                                 "created_by": user.get("username", ""),
                             })
 
-                        write_stock_moves_batch(moves)
+                        if moves:
+                            write_stock_moves_batch(moves)
 
                         _clear_sales_related_caches(clear_products=True, clear_customers=False)
                         _clear_prep_cart_and_free_qty_keys()
@@ -1082,19 +1216,22 @@ div[data-testid="stForm"] button:hover {
                     @firestore.transactional
                     def tx_direct_deliver(transaction):
                         ts = now_iso()
-
-                        prod_refs = []
-                        snaps = []
+                        tx_items = []
 
                         for it in items:
+                            if not bool(it.get("consume_stock", True)):
+                                tx_items.append((it, None, None))
+                                continue
+
                             ref = db.collection("products").document(it["product_id"])
                             snap = ref.get(transaction=transaction)
                             if not snap.exists:
                                 raise ValueError(f"منتج غير موجود: {it.get('product_name', '')}")
-                            prod_refs.append(ref)
-                            snaps.append(snap)
+                            tx_items.append((it, ref, snap))
 
-                        for it, snap in zip(items, snaps):
+                        for it, ref, snap in tx_items:
+                            if not bool(it.get("consume_stock", True)):
+                                continue
                             cur = float(to_float((snap.to_dict() or {}).get("qty_on_hand", 0)))
                             req = float(it["qty"])
                             if cur < req:
@@ -1102,7 +1239,9 @@ div[data-testid="stForm"] button:hover {
                                     f"المخزون غير كافي للمنتج: {it['product_name']} (المطلوب {req}, المتوفر {cur})"
                                 )
 
-                        for it, ref, snap in zip(items, prod_refs, snaps):
+                        for it, ref, snap in tx_items:
+                            if not bool(it.get("consume_stock", True)):
+                                continue
                             cur = float(to_float((snap.to_dict() or {}).get("qty_on_hand", 0)))
                             req = float(it["qty"])
                             transaction.update(ref, {"qty_on_hand": cur - req, "updated_at": ts})
@@ -1137,6 +1276,8 @@ div[data-testid="stForm"] button:hover {
 
                     moves = []
                     for it in items:
+                        if not bool(it.get("consume_stock", True)):
+                            continue
                         moves.append({
                             "type": "sale",
                             "ref_type": "sale_direct",
@@ -1150,7 +1291,8 @@ div[data-testid="stForm"] button:hover {
                             "created_by": user.get("username", ""),
                         })
 
-                    write_stock_moves_batch(moves)
+                    if moves:
+                        write_stock_moves_batch(moves)
 
                     _clear_sales_related_caches(clear_products=True, clear_customers=False)
                     _clear_prep_cart_and_free_qty_keys()
@@ -1190,13 +1332,50 @@ div[data-testid="stForm"] button:hover {
             inv = o.get("invoice_no") or o.get("ref") or sid
             cname = o.get("customer_name") or "—"
             net_v = float(to_float(o.get("net", 0)))
+            order_items = o.get("items", []) or []
 
-            row1, row2, row3 = st.columns([3.8, 1.2, 1.2])
+            show_key = f"show_prepared_items_{sid}"
+            if show_key not in st.session_state:
+                st.session_state[show_key] = False
 
-            with row1:
+            top1, top2 = st.columns([4.6, 1.2])
+
+            with top1:
                 st.markdown(f"**{inv}** — {cname} | الصافي: **{net_v:.2f}**")
 
-            with row2:
+            with top2:
+                btn_text = "📄 إخفاء" if st.session_state[show_key] else "📄 عرض"
+                if st.button(btn_text, use_container_width=True, key=f"toggle_items_{sid}"):
+                    st.session_state[show_key] = not st.session_state[show_key]
+                    st.rerun()
+
+            if st.session_state[show_key]:
+                if order_items:
+                    for it in order_items:
+                        pname = it.get("product_name") or it.get("name") or "—"
+                        qty = int(to_int(it.get("qty", 0), 0))
+                        price = float(to_float(it.get("price", 0), 0.0))
+                        line_total = float(to_float(it.get("total", price * qty), 0.0))
+
+                        st.markdown(
+                            f"""
+                            <div style="padding:8px 12px; margin:6px 0; border:1px solid #e5e7eb; border-radius:10px;">
+                                <b>{pname}</b>
+                                <div style="font-size:13px; color:#374151; margin-top:4px;">
+                                    الكمية: {qty}
+                                    &nbsp; | &nbsp;
+                                    الإجمالي: {line_total:.2f}
+                                </div>
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
+                else:
+                    st.info("لا توجد أصناف داخل هذا الطلب.")
+
+            act1, act2 = st.columns([1.2, 1.2])
+
+            with act1:
                 if st.button("✅ تسليم", use_container_width=True, key=f"deliver_{sid}"):
                     if _supports_dialog():
                         st.session_state.deliver_target_id = sid
@@ -1207,7 +1386,7 @@ div[data-testid="stForm"] button:hover {
                     else:
                         st.error("نسخة Streamlit لا تدعم Dialog. حدّث Streamlit أو اطلب مني نسخة بدون Dialog.")
 
-            with row3:
+            with act2:
                 if st.button("❌ إلغاء الطلب", use_container_width=True, key=f"cancel_prepared_{sid}"):
                     if not _acquire_action_lock(f"cancel_prepared_{sid}"):
                         return

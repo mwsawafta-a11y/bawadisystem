@@ -124,8 +124,8 @@ def go(p: str):
 # =========================================================
 # Login
 # =========================================================
-if st.session_state.user is None:
-    login()
+if st.session_state.get("user") is None:
+    login(go)
     st.stop()
 
 user = st.session_state.user

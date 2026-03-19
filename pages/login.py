@@ -11,13 +11,13 @@ def hash_password(pw: str) -> str:
 
 def login(go=None):
     st.session_state.setdefault("_login_busy", False)
-    st.session_state.setdefault("_login_restore_wait", False)
 
-    # 1) محاولة استرجاع تسجيل الدخول من localStorage
+    # محاولة استرجاع تسجيل الدخول من localStorage
     html("""
     <script>
     const user = localStorage.getItem("login_user");
-    if (user){
+    if (user && !window.__loginUserRestoredOnce) {
+        window.__loginUserRestoredOnce = true;
         window.parent.postMessage({
             type: "streamlit:setSessionState",
             key: "user",
@@ -27,22 +27,15 @@ def login(go=None):
     </script>
     """, height=0)
 
-    # 2) إذا تم الاسترجاع بالفعل
+    # إذا تم الاسترجاع بالفعل
     user = st.session_state.get("user")
     if isinstance(user, dict) and user.get("username"):
-        st.session_state["_login_restore_wait"] = False
         if callable(go) and st.session_state.get("page") in (None, "", "login"):
             if user.get("role") == "distributor":
                 go("orders_prep")
             else:
                 go("dashboard")
         return user
-
-    # 3) انتظر محاولة واحدة قصيرة بعد الريفريش حتى يلحق localStorage
-    if not st.session_state.get("_login_restore_wait", False):
-        st.session_state["_login_restore_wait"] = True
-        st.info("جاري التحقق من الجلسة...")
-        st.rerun()
 
     st.title("تسجيل الدخول")
 
@@ -67,27 +60,27 @@ def login(go=None):
 
             if not u or not p:
                 st.error("أدخل اسم المستخدم وكلمة المرور")
-                st.stop()
+                return
 
             try:
                 doc = db.collection("admin_users").document(u).get()
             except Exception as e:
                 st.error(f"تعذر الاتصال بقاعدة البيانات: {e}")
-                st.stop()
+                return
 
             if not getattr(doc, "exists", False):
                 st.error("اسم المستخدم غير صحيح")
-                st.stop()
+                return
 
             data = doc.to_dict() or {}
 
             if not data.get("active", False):
                 st.error("الحساب موقوف")
-                st.stop()
+                return
 
             if data.get("password_hash") != hash_password(p):
                 st.error("كلمة المرور غير صحيحة")
-                st.stop()
+                return
 
             user = {
                 "username": u,
@@ -97,9 +90,8 @@ def login(go=None):
 
             st.session_state["user"] = user
             st.session_state["is_authed"] = True
-            st.session_state["_login_restore_wait"] = False
 
-            st.components.v1.html(f"""
+            html(f"""
             <script>
             localStorage.setItem("login_user", {json.dumps(user)});
             </script>
@@ -112,6 +104,7 @@ def login(go=None):
                     go("orders_prep")
                 else:
                     go("dashboard")
+                return
 
             st.rerun()
 

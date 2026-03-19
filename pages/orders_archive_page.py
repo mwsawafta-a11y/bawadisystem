@@ -154,7 +154,7 @@ def orders_archive_page(go, user):
         return
 
     if st.button("⬅️ رجوع", key="arch_back"):
-        go("orders_prep")
+        go("app")
 
     today = datetime.now(TZ).date()
 
