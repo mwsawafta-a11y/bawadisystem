@@ -3,5 +3,4 @@ firebase-admin==6.4.0
 google-cloud-firestore==2.14.0
 google-cloud-core==2.4.1
 protobuf==4.25.3
-grpcio==1.59.3
-pillow==10.4.0
+grpcio>=1.66,<2
