@@ -38,17 +38,17 @@ def get_distributor_name(dist_id: str) -> str:
 # ---------------------------
 # CACHED LOADERS
 # ---------------------------
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def load_products_cached():
     return col_to_list("products", where_active=True)
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def load_customers_cached():
     return col_to_list("customers", where_active=True)
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=120)
 def _get_customer_prices_map_cached(customer_id: str, limit=400):
     if not customer_id:
         return {}
@@ -122,7 +122,7 @@ def _load_prepared_orders_for_customer_cached(customer_id: str):
 
 
 @st.cache_data(ttl=20)
-def _load_done_orders_for_customer_cached(customer_id: str, limit=5):
+def _load_done_orders_for_customer_cached(customer_id: str, limit=3):
     if not customer_id:
         return []
 
@@ -143,6 +143,21 @@ def _load_done_orders_for_customer_cached(customer_id: str, limit=5):
         done.append(x)
 
     return done
+
+
+# ---------------------------
+# SESSION LOADERS (once per session until manual clear)
+# ---------------------------
+def _get_products_once():
+    if "orders_products_once" not in st.session_state:
+        st.session_state["orders_products_once"] = load_products_cached()
+    return st.session_state["orders_products_once"]
+
+
+def _get_customers_once():
+    if "orders_customers_once" not in st.session_state:
+        st.session_state["orders_customers_once"] = load_customers_cached()
+    return st.session_state["orders_customers_once"]
 
 
 # ---------------------------
@@ -171,9 +186,15 @@ def _clear_prep_cart_and_free_qty_keys():
             st.session_state.pop(k, None)
 
 
-def _clear_sales_related_caches():
-    load_products_cached.clear()
-    load_customers_cached.clear()
+def _clear_sales_related_caches(clear_products=False, clear_customers=False):
+    if clear_products:
+        load_products_cached.clear()
+        st.session_state.pop("orders_products_once", None)
+
+    if clear_customers:
+        load_customers_cached.clear()
+        st.session_state.pop("orders_customers_once", None)
+
     _get_customer_prices_map_cached.clear()
     _get_customer_sales_for_statement.clear()
     _load_prepared_orders_for_customer_cached.clear()
@@ -223,6 +244,7 @@ def orders_prep_page(go, user):
     with r1:
         if st.button("🔄 تحديث المنتجات", key="prep_refresh_products"):
             load_products_cached.clear()
+            st.session_state.pop("orders_products_once", None)
             _load_prepared_orders_for_customer_cached.clear()
             _load_done_orders_for_customer_cached.clear()
             st.rerun()
@@ -230,13 +252,14 @@ def orders_prep_page(go, user):
     with r2:
         if st.button("🔄 تحديث العملاء", key="prep_refresh_customers"):
             load_customers_cached.clear()
+            st.session_state.pop("orders_customers_once", None)
             _get_customer_prices_map_cached.clear()
             _load_prepared_orders_for_customer_cached.clear()
             _load_done_orders_for_customer_cached.clear()
             st.rerun()
 
-    products = load_products_cached()
-    customers = load_customers_cached()
+    products = _get_products_once()
+    customers = _get_customers_once()
 
     prod_by_id = {p["id"]: p for p in products}
     cust_by_id = {c["id"]: c for c in customers}
@@ -356,7 +379,7 @@ def orders_prep_page(go, user):
                             "note": "تسديد ذمم من شاشة تحضير الطلبات"
                         })
 
-                        _clear_sales_related_caches()
+                        _clear_sales_related_caches(clear_products=False, clear_customers=True)
 
                         new_remaining = max(0.0, float(cur_bal) - float(total_effect))
                         st.session_state.last_debt_payment_amount = float(amount)
@@ -585,7 +608,7 @@ def orders_prep_page(go, user):
 
                         tx_deliver(db.transaction())
 
-                        _clear_sales_related_caches()
+                        _clear_sales_related_caches(clear_products=False, clear_customers=True)
 
                         old_paid_after = float(to_float(st.session_state.get(f"deliver_old_debt_paid_state_{sid}", 0.0), 0.0))
                         if old_paid_after > 0:
@@ -1005,7 +1028,7 @@ div[data-testid="stForm"] button:hover {
 
                         write_stock_moves_batch(moves)
 
-                        _clear_sales_related_caches()
+                        _clear_sales_related_caches(clear_products=True, clear_customers=False)
                         _clear_prep_cart_and_free_qty_keys()
                         st.success("تم حفظ الطلب كمُحضّر ✅ وتم خصم المخزون ✅")
                         st.rerun()
@@ -1129,7 +1152,7 @@ div[data-testid="stForm"] button:hover {
 
                     write_stock_moves_batch(moves)
 
-                    _clear_sales_related_caches()
+                    _clear_sales_related_caches(clear_products=True, clear_customers=False)
                     _clear_prep_cart_and_free_qty_keys()
                     st.session_state.deliver_target_id = sale_id
                     st.session_state.active_dialog = "deliver"
@@ -1154,7 +1177,7 @@ div[data-testid="stForm"] button:hover {
         done = []
     else:
         prepared = _load_prepared_orders_for_customer_cached(customer_id)
-        done = _load_done_orders_for_customer_cached(customer_id, limit=5)
+        done = _load_done_orders_for_customer_cached(customer_id, limit=3)
 
     prepared.sort(key=lambda x: (x.get("created_at") or ""), reverse=True)
     done.sort(key=lambda x: (x.get("delivered_at") or x.get("updated_at") or ""), reverse=True)
@@ -1190,7 +1213,7 @@ div[data-testid="stForm"] button:hover {
                         return
                     try:
                         cancel_prepared_sale(sid, user)
-                        _clear_sales_related_caches()
+                        _clear_sales_related_caches(clear_products=True, clear_customers=False)
                         st.success("تم إلغاء الطلب وإرجاع المخزون ✅")
                         st.rerun()
                     except Exception as e:
@@ -1207,18 +1230,18 @@ div[data-testid="stForm"] button:hover {
         st.info("لا يوجد فواتير مُسلّمة حالياً.")
         return
 
-    st.session_state.setdefault("done_show_n", 20)
+    st.session_state.setdefault("done_show_n", 3)
 
     c_reset, c_more = st.columns([1, 1])
     with c_reset:
         if st.button("↩️ إعادة ضبط العرض", use_container_width=True, key="done_reset"):
-            st.session_state.done_show_n = 20
+            st.session_state.done_show_n = 3
             st.rerun()
 
     with c_more:
         can_more = st.session_state.done_show_n < len(done)
         if st.button("➕ عرض باقي الفواتير", use_container_width=True, key="done_more", disabled=not can_more):
-            st.session_state.done_show_n += 20
+            st.session_state.done_show_n += 3
             st.rerun()
 
     show_n = min(int(st.session_state.done_show_n), len(done))
