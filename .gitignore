@@ -8,33 +8,21 @@ __pycache__/
 .venv/
 venv/
 
-# Streamlit secrets
-.streamlit/
-
-# Firebase keys
-serviceAccountKey.json
-*.json
+# VS Code / dev
+.vscode/
+.devcontainer/
 
 # OS
 .DS_Store
 Thumbs.db
 
-# VS Code
-.vscode/
-
-# local helper files
-py
-pillow
-where
-streamlit
-
-# secrets
+# Streamlit secrets فقط
 .streamlit/secrets.toml
 secrets.toml
+
+# Firebase secret key فقط
 serviceAccountKey.json
 
-# python cache / env
-__pycache__/
-.venv/
-.vscode/
-.devcontainer/
+# ملفات محلية لا نريد رفعها
+test.py
+create_admin.py
