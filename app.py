@@ -7,6 +7,7 @@ from pages.inventory_page import inventory_page
 from pages.orders_prep_page import orders_prep_page
 from pages.orders_archive_page import orders_archive_page
 
+# ✅ لازم يكون أول شيء
 st.set_page_config(
     page_title="مخابز البوادي",
     layout="wide",
@@ -14,7 +15,7 @@ st.set_page_config(
 )
 
 # =========================================================
-# Global UI/CSS (Hide + Responsive + Fix top spacing)
+# CSS
 # =========================================================
 hide_all_streamlit = """
 <style>
@@ -38,65 +39,11 @@ section.main > div.block-container{
 }
 
 h1, h2, h3 { margin-top: 0.2rem !important; }
-hr, .stDivider { margin: 0.6rem 0 !important; }
 
 div[data-testid="column"] button{
   height: 44px !important;
   border-radius: 14px !important;
   font-weight: 800 !important;
-  border: 1px solid rgba(0,0,0,0.08) !important;
-}
-
-div[data-testid="stDataFrame"]{
-  width: 100%;
-  overflow-x: auto;
-}
-
-details summary { font-weight: 800; }
-
-@media (max-width: 768px){
-  section.main > div.block-container{
-    padding-top: 0.1rem !important;
-    padding-left: 0.6rem !important;
-    padding-right: 0.6rem !important;
-  }
-
-  div[data-testid="stHorizontalBlock"]{
-    flex-wrap: wrap !important;
-    gap: 0.6rem !important;
-  }
-
-  div[data-testid="stHorizontalBlock"] > div:has(div[data-testid="stMetric"]){
-    flex: 0 0 calc(50% - 0.6rem) !important;
-    width: calc(50% - 0.6rem) !important;
-    min-width: calc(50% - 0.6rem) !important;
-  }
-
-  div[data-testid="stHorizontalBlock"]:has(div[data-testid="stDownloadButton"]),
-  div[data-testid="stHorizontalBlock"]:has(div[data-testid="stButton"]){
-    justify-content: center !important;
-  }
-
-  div[data-testid="stHorizontalBlock"] > div:has(div[data-testid="stDownloadButton"]),
-  div[data-testid="stHorizontalBlock"] > div:has(div[data-testid="stButton"]){
-    flex: 0 0 calc(50% - 0.6rem) !important;
-    width: calc(50% - 0.6rem) !important;
-    min-width: calc(50% - 0.6rem) !important;
-  }
-
-  div[data-testid="stDownloadButton"] button,
-  div[data-testid="stButton"] button{
-    width: 100% !important;
-    height: 46px !important;
-  }
-
-  div[data-testid="stMetric"] *{
-    font-size: 0.95rem !important;
-  }
-
-  div[data-testid="stDataFrame"] *{
-    font-size: 0.90rem !important;
-  }
 }
 </style>
 """
@@ -105,36 +52,36 @@ st.markdown(hide_all_streamlit, unsafe_allow_html=True)
 # =========================================================
 # Session
 # =========================================================
-if "user" not in st.session_state:
-    st.session_state.user = None
-
-if "page" not in st.session_state:
-    st.session_state.page = "dashboard"
-
-if "show_alerts" not in st.session_state:
-    st.session_state.show_alerts = False
-
+st.session_state.setdefault("user", None)
+st.session_state.setdefault("page", "dashboard")
 
 def go(p: str):
-    if st.session_state.page != p:
-        st.session_state.page = p
-        st.rerun()
-
+    st.session_state.page = p
 
 # =========================================================
-# Login
+# Login (🔥 تم إصلاحه)
 # =========================================================
 if st.session_state.get("user") is None:
-    login(go)
-    st.stop()
+    user = login()
 
-user = st.session_state.user
+    if not user:
+        st.stop()
+
+    st.session_state.user = user
+
+user = st.session_state.get("user")
 role = user.get("role")
+
+# توجيه أول مرة
+if st.session_state.page in (None, "", "login"):
+    if role == "distributor":
+        st.session_state.page = "orders_prep"
+    else:
+        st.session_state.page = "dashboard"
 
 if role not in ["admin", "distributor"]:
     st.error("ليس لديك صلاحية الوصول")
     st.stop()
-
 
 # =========================================================
 # Dashboard
@@ -144,9 +91,8 @@ if st.session_state.page == "dashboard":
     st.caption(f"مرحبًا: {user.get('username','')}")
 
     left, center, right = st.columns([1.2, 2.2, 1.2])
-    with center:
-        role = user.get("role")
 
+    with center:
         if role == "admin":
             if st.button("👥 العملاء", use_container_width=True):
                 go("customers")
@@ -170,6 +116,7 @@ if st.session_state.page == "dashboard":
             localStorage.removeItem("login_user");
             </script>
             """, height=0)
+
             st.session_state.clear()
             st.rerun()
 
@@ -177,31 +124,31 @@ if st.session_state.page == "dashboard":
 # Pages
 # =========================================================
 elif st.session_state.page == "customers":
-    if user.get("role") == "admin":
+    if role == "admin":
         customers_page(go, user)
     else:
         st.error("ليس لديك صلاحية الوصول")
 
 elif st.session_state.page == "inventory":
-    if user.get("role") == "admin":
+    if role == "admin":
         inventory_page(go, user)
     else:
         st.error("ليس لديك صلاحية الوصول")
 
 elif st.session_state.page == "orders_prep":
-    if user.get("role") in ["admin", "distributor"]:
+    if role in ["admin", "distributor"]:
         orders_prep_page(go, user)
     else:
         st.error("ليس لديك صلاحية الوصول")
 
 elif st.session_state.page == "distributors":
-    if user.get("role") == "admin":
+    if role == "admin":
         distributors_page(go, user)
     else:
         st.error("ليس لديك صلاحية الوصول")
 
 elif st.session_state.page == "orders_archive":
-    if user.get("role") == "admin":
+    if role == "admin":
         orders_archive_page(go, user)
     else:
         st.error("ليس لديك صلاحية الوصول")

@@ -4,3 +4,4 @@ google-cloud-firestore==2.14.0
 google-cloud-core==2.4.1
 protobuf==4.25.3
 grpcio>=1.66,<2
+watchdog

@@ -9,10 +9,21 @@ def hash_password(pw: str) -> str:
     return hashlib.sha256((pw or "").encode("utf-8")).hexdigest()
 
 
-def login(go=None):
+def logout():
+    html("""
+    <script>
+    localStorage.removeItem("login_user");
+    </script>
+    """, height=0)
+
+    st.session_state.clear()
+    st.rerun()
+
+
+def login():
     st.session_state.setdefault("_login_busy", False)
 
-    # محاولة استرجاع تسجيل الدخول من localStorage
+    # استرجاع من localStorage
     html("""
     <script>
     const user = localStorage.getItem("login_user");
@@ -27,14 +38,9 @@ def login(go=None):
     </script>
     """, height=0)
 
-    # إذا تم الاسترجاع بالفعل
     user = st.session_state.get("user")
+
     if isinstance(user, dict) and user.get("username"):
-        if callable(go) and st.session_state.get("page") in (None, "", "login"):
-            if user.get("role") == "distributor":
-                go("orders_prep")
-            else:
-                go("dashboard")
         return user
 
     st.title("تسجيل الدخول")
@@ -48,39 +54,35 @@ def login(go=None):
         use_container_width=True,
         disabled=st.session_state.get("_login_busy", False)
     ):
-        if st.session_state.get("_login_busy", False):
-            st.warning("⏳ جاري تسجيل الدخول...")
-            st.stop()
-
         st.session_state["_login_busy"] = True
 
+        u = (username or "").strip()
+        p = (password or "").strip()
+
+        if not u or not p:
+            st.error("أدخل اسم المستخدم وكلمة المرور")
+            st.session_state["_login_busy"] = False
+            st.stop()
+
         try:
-            u = (username or "").strip()
-            p = (password or "").strip()
+            doc = db.collection("admin_users").document(u).get()
 
-            if not u or not p:
-                st.error("أدخل اسم المستخدم وكلمة المرور")
-                return
-
-            try:
-                doc = db.collection("admin_users").document(u).get()
-            except Exception as e:
-                st.error(f"تعذر الاتصال بقاعدة البيانات: {e}")
-                return
-
-            if not getattr(doc, "exists", False):
+            if not doc.exists:
                 st.error("اسم المستخدم غير صحيح")
-                return
+                st.session_state["_login_busy"] = False
+                st.stop()
 
             data = doc.to_dict() or {}
 
             if not data.get("active", False):
                 st.error("الحساب موقوف")
-                return
+                st.session_state["_login_busy"] = False
+                st.stop()
 
             if data.get("password_hash") != hash_password(p):
                 st.error("كلمة المرور غير صحيحة")
-                return
+                st.session_state["_login_busy"] = False
+                st.stop()
 
             user = {
                 "username": u,
@@ -97,18 +99,11 @@ def login(go=None):
             </script>
             """, height=0)
 
-            st.session_state.pop("login_password", None)
-
-            if callable(go):
-                if user["role"] == "distributor":
-                    go("orders_prep")
-                else:
-                    go("dashboard")
-                return
-
+            st.session_state["_login_busy"] = False
             st.rerun()
 
-        finally:
+        except Exception as e:
+            st.error(f"خطأ: {e}")
             st.session_state["_login_busy"] = False
 
     st.stop()
