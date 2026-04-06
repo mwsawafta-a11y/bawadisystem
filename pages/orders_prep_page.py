@@ -319,7 +319,6 @@ def orders_prep_page(go, user):
     st.session_state.setdefault("last_print_sale_id", None)
     st.session_state.setdefault("last_print_customer_id", None)
     st.session_state.setdefault("_print_mode", "invoice")
-    st.session_state.setdefault("printed_once", False)
     st.session_state.setdefault("deliver_target_id", None)
     st.session_state.setdefault("active_dialog", None)
     st.session_state.setdefault("cust_price_map", {})
@@ -376,6 +375,7 @@ def orders_prep_page(go, user):
                 st.info("لا يوجد ذمم مستحقة على هذا العميل.")
                 if st.button("إغلاق", use_container_width=True, key=f"close_debt_payment_{cid}"):
                     st.session_state.active_dialog = None
+                    st.session_state.pop("deliver_target_id", None)  # حسب الديالوج
                     st.rerun()
                 return
 
@@ -764,7 +764,7 @@ def orders_prep_page(go, user):
 
             with col2:
                 if st.button("❌ إغلاق", use_container_width=True, key="print_close"):
-                    st.session_state.printed_once = False
+                    
                     st.session_state.active_dialog = None
                     st.session_state.last_print_sale_id = None
                     st.session_state.last_print_customer_id = None
@@ -774,10 +774,7 @@ def orders_prep_page(go, user):
                 cid = st.session_state.get("last_print_customer_id") or ""
                 cust = doc_get("customers", cid) if cid else {}
                 html = build_debt_only_invoice_html(cust or {}, company_name="مخابز البوادي", paper=paper)
-                if not st.session_state.get("printed_once", False):
-                    st.session_state.printed_once = True
-                    time.sleep(0.2)
-                    show_print_html(html, height=820)
+                show_print_html(html, height=820)
                     
                 return
 
@@ -786,10 +783,7 @@ def orders_prep_page(go, user):
                 cust = doc_get("customers", cid) if cid else {}
                 sales = _get_customer_sales_for_statement(cid, limit=200) if cid else []
                 html = build_customer_statement_html(cust or {}, sales, company_name="مخابز البوادي", paper=paper, max_rows=30)
-                if not st.session_state.get("printed_once", False):
-                    st.session_state.printed_once = True
-                    time.sleep(0.2)
-                    show_print_html(html, height=820)
+                show_print_html(html, height=820)
 
                 return
 
@@ -807,10 +801,7 @@ def orders_prep_page(go, user):
                     company_name="مخابز البوادي",
                     paper=paper
                 )
-                if not st.session_state.get("printed_once", False):
-                    st.session_state.printed_once = True
-                    time.sleep(0.2)
-                    show_print_html(html, height=820)
+                show_print_html(html, height=820)
                 return
 
             sid = st.session_state.get("last_print_sale_id") or ""
@@ -825,10 +816,7 @@ def orders_prep_page(go, user):
             else:
                 html = build_invoice_html(sale, customer=customer or {}, company_name="مخابز البوادي", paper=paper)
 
-            if not st.session_state.get("printed_once", False):
-                st.session_state.printed_once = True
-                time.sleep(0.2)
-                show_print_html(html, height=820)
+            show_print_html(html, height=820)
         _dlg()
 
     if _supports_dialog():
@@ -997,7 +985,7 @@ div[data-testid="stForm"] button:hover {
             if qty_key not in st.session_state:
                 st.session_state[qty_key] = (qty_in_cart if qty_in_cart > 0 else None)
 
-            cols = st.columns([3.8, 1.0], gap="small")
+            cols = st.columns([4.5, 1.5], gap="small")
             with cols[0]:
                 extra = " <span style='color:#0ea5e9;'>(لا يستهلك)</span>" if not consume_stock else ""
                 st.markdown(f"<div style='margin-bottom:-8px;'><b>{nm}</b>{extra}</div>", unsafe_allow_html=True)
@@ -1187,34 +1175,7 @@ div[data-testid="stForm"] button:hover {
                     finally:
                         _release_action_lock("prep_save")
 
-        components.html("""
-        <script>
-        function colorDirectDeliverButton() {
-          const buttons = window.parent.document.querySelectorAll('button');
-          buttons.forEach(btn => {
-            const txt = (btn.innerText || "").trim();
-            if (txt.includes("🚚 تسليم مباشر")) {
-              btn.style.backgroundColor = "#ef4444";
-              btn.style.color = "white";
-              btn.style.border = "1px solid #ef4444";
-              btn.style.fontWeight = "700";
-              btn.onmouseenter = () => {
-                btn.style.backgroundColor = "#dc2626";
-                btn.style.border = "1px solid #dc2626";
-              };
-              btn.onmouseleave = () => {
-                btn.style.backgroundColor = "#ef4444";
-                btn.style.border = "1px solid #ef4444";
-              };
-            }
-          });
-        }
-        colorDirectDeliverButton();
-        setTimeout(colorDirectDeliverButton, 300);
-        setTimeout(colorDirectDeliverButton, 1000);
-        </script>
-        """, height=0, width=0)
-
+        
         with colB:
             if st.button("🚚 تسليم مباشر (خصم + تسليم الآن)", use_container_width=True, key="prep_direct_deliver"):
                 if user.get("role") == "distributor" and prep_kind == "زائر":
@@ -1471,6 +1432,6 @@ div[data-testid="stForm"] button:hover {
                 st.session_state.last_print_customer_id = None
                 st.session_state._print_mode = "receipt"
                 st.session_state.active_dialog = "print"
-                st.rerun()
+                st.session_state._force_rerun = True
 
         st.divider()
