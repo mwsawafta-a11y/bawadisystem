@@ -844,5 +844,40 @@ def build_debt_payment_receipt_html(
 # ---------------------------
 # Render in Streamlit
 # ---------------------------
-def show_print_html(html, height=1100):
-    components.html(html, height=height, scrolling=True)
+def show_print_html(html: str, height=800):
+    import streamlit.components.v1 as components
+
+    full_html = f"""
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <style>
+            body {{
+                margin: 0;
+                padding: 0;
+            }}
+        </style>
+    </head>
+
+    <body>
+        {html}
+
+        <script>
+            function triggerPrint() {{
+                setTimeout(() => {{
+                    window.print();
+                    
+                    // محاولة إغلاق نافذة الطباعة بعد الإرسال
+                    setTimeout(() => {{
+                        window.close();
+                    }}, 300);
+                }}, 300); // مهم لتقليل التأخير
+            }}
+
+            window.onload = triggerPrint;
+        </script>
+    </body>
+    </html>
+    """
+
+    components.html(full_html, height=height)

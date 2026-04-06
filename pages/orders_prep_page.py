@@ -4,7 +4,7 @@ import streamlit.components.v1 as components
 from datetime import datetime, timezone, timedelta
 from firebase_config import db
 from firebase_admin import firestore
-
+import time
 from utils.helpers import now_iso, to_float, to_int
 from services.firestore_queries import col_to_list, doc_get
 
@@ -319,6 +319,7 @@ def orders_prep_page(go, user):
     st.session_state.setdefault("last_print_sale_id", None)
     st.session_state.setdefault("last_print_customer_id", None)
     st.session_state.setdefault("_print_mode", "invoice")
+    st.session_state.setdefault("printed_once", False)
     st.session_state.setdefault("deliver_target_id", None)
     st.session_state.setdefault("active_dialog", None)
     st.session_state.setdefault("cust_price_map", {})
@@ -763,6 +764,7 @@ def orders_prep_page(go, user):
 
             with col2:
                 if st.button("❌ إغلاق", use_container_width=True, key="print_close"):
+                    st.session_state.printed_once = False
                     st.session_state.active_dialog = None
                     st.session_state.last_print_sale_id = None
                     st.session_state.last_print_customer_id = None
@@ -772,7 +774,11 @@ def orders_prep_page(go, user):
                 cid = st.session_state.get("last_print_customer_id") or ""
                 cust = doc_get("customers", cid) if cid else {}
                 html = build_debt_only_invoice_html(cust or {}, company_name="مخابز البوادي", paper=paper)
-                show_print_html(html, height=820)
+                if not st.session_state.get("printed_once", False):
+                    st.session_state.printed_once = True
+                    time.sleep(0.2)
+                    show_print_html(html, height=820)
+                    
                 return
 
             if mode == "statement":
@@ -780,7 +786,11 @@ def orders_prep_page(go, user):
                 cust = doc_get("customers", cid) if cid else {}
                 sales = _get_customer_sales_for_statement(cid, limit=200) if cid else []
                 html = build_customer_statement_html(cust or {}, sales, company_name="مخابز البوادي", paper=paper, max_rows=30)
-                show_print_html(html, height=820)
+                if not st.session_state.get("printed_once", False):
+                    st.session_state.printed_once = True
+                    time.sleep(0.2)
+                    show_print_html(html, height=820)
+
                 return
 
             if mode == "debt_payment_only":
@@ -797,7 +807,10 @@ def orders_prep_page(go, user):
                     company_name="مخابز البوادي",
                     paper=paper
                 )
-                show_print_html(html, height=820)
+                if not st.session_state.get("printed_once", False):
+                    st.session_state.printed_once = True
+                    time.sleep(0.2)
+                    show_print_html(html, height=820)
                 return
 
             sid = st.session_state.get("last_print_sale_id") or ""
@@ -812,8 +825,10 @@ def orders_prep_page(go, user):
             else:
                 html = build_invoice_html(sale, customer=customer or {}, company_name="مخابز البوادي", paper=paper)
 
-            show_print_html(html, height=820)
-
+            if not st.session_state.get("printed_once", False):
+                st.session_state.printed_once = True
+                time.sleep(0.2)
+                show_print_html(html, height=820)
         _dlg()
 
     if _supports_dialog():
