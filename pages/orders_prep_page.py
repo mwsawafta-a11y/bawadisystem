@@ -1073,7 +1073,7 @@ div[data-testid="stForm"] button:hover {
             colA, colB, colC = st.columns(3)
         else:
             colB, colC = st.columns(2)
-
+#ok
         if user.get("role") == "admin":
             with colA:
                 if st.button("💾 حفظ كطلب مُحضّر (خصم مخزون الآن)", use_container_width=True, key="prep_save"):
